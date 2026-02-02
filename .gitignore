@@ -1,41 +1,25 @@
-# Prerequisites
-*.d
 
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
+# Compiled class file
+*.class
 
-# Precompiled Headers
-*.gch
-*.pch
+# Log file
+*.log
 
-# Linker files
-*.ilk
+# BlueJ files
+*.ctxt
 
-# Debugger Files
-*.pdb
+# Mobile Tools for Java (J2ME)
+.mtj.tmp/
 
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
+# Package Files #
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
 
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
-
-# debug information files
-*.dwo
+# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
+hs_err_pid*
+replay_pid*
