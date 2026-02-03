@@ -12,6 +12,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class Node<T>{
     private final String nodeID;
@@ -34,6 +36,9 @@ public class Node<T>{
 
     private Role currentRole;
     private int votesReceived;
+
+    private Map<String, Integer> nextIndex;
+    private Map<String, Integer> matchIndex;
 
     public Node(String nodeID, List<String> peers, Network network){
         this.nodeID = nodeID;
@@ -149,24 +154,41 @@ public class Node<T>{
     }
 
     private void sendHearthbeats(){
-        AppendEntriesRequest request;
-
         lock.lock();
 
         try{
             if (currentRole != Role.LEADER) return;
 
-            request = new AppendEntriesRequest<>(currentTerm, nodeID, 0, 0, new ArrayList<>(), 0);
+            for (String peerID : peers){
+                int prevLogIndex = nextIndex.getOrDefault(peerID, 0) -1;
+                long prevLogTerm = 0;
+
+                if (prevLogIndex >= 0 && prevLogIndex < log.size()) {
+                    prevLogTerm = log.get(prevLogIndex).term();
+                }
+
+                List<LogEntry<T>> entriesToSend = new ArrayList<>();
+                int nextIdx = nextIndex.get(peerID);
+
+                if (nextIdx < log.size()){
+                    entriesToSend.addAll(log.subList(nextIdx, log.size()));
+                }
+
+                AppendEntriesRequest<T> request = new AppendEntriesRequest<>(
+                    currentTerm,
+                    nodeID,
+                    prevLogIndex,
+                    prevLogTerm,
+                    entriesToSend,
+                    0
+                );
+
+                vThreadExecutor.submit(() -> network.sendAppendEntries(peerID, request).thenAccept(response -> handleAppendEntriesResponse(peerID, response, entriesToSend.size())));
+
+            }
         }
         finally{
             lock.unlock();
-        }
-
-        for (String peerId : peers) {
-            vThreadExecutor.submit(() -> 
-                network.sendAppendEntries(peerId, request)
-                       .thenAccept(this::handleHeartbeatResponse)
-            );
         }
     }
 
@@ -234,6 +256,14 @@ public class Node<T>{
         currentRole = Role.LEADER;
         System.out.println("NODE " + nodeID + " BECAME LEADER (Term " + currentTerm + ")");
 
+        nextIndex = new ConcurrentHashMap<>();
+        matchIndex = new ConcurrentHashMap<>();
+
+        for (String peerID : peers){
+            nextIndex.put(peerID, log.size());
+            matchIndex.put(peerID, -1);
+        }
+
         vThreadExecutor.submit(this::runHearthbeatLoop);
     }
 
@@ -283,15 +313,76 @@ public class Node<T>{
                 currentTerm = request.term();
                 currentRole = Role.FOLLOWER;
                 votedFor = null;
-                
-                if (currentRole == Role.CANDIDATE) {
-                    currentRole = Role.FOLLOWER;
-                }
+            }
+            
+            resetElectionTimer();
+            
+            List<LogEntry<T>> newEntries = (List<LogEntry<T>>)(List<?>) request.entries();
+            if (!newEntries.isEmpty()) {
+                log.addAll(newEntries);
+                System.out.println("Node " + nodeID + " replicated " + newEntries.size() + " entries.");
             }
 
-            resetElectionTimer();
-
             return new AppendEntriesResponse(currentTerm, true);
+        } finally {
+            lock.unlock();
+        }
+    }
+    public boolean propose(T command){
+        lock.lock();
+
+        try{
+            if (currentRole != Role.LEADER){
+                return false;
+            }
+
+            LogEntry<T> entry = new LogEntry<>(currentTerm, command);
+            log.add(entry);
+
+            // TODO: decide if to send an hearthbeat to reset the connection
+            sendHearthbeats();
+
+            return true;
+        }
+        finally{
+            lock.unlock();
+        }
+    }
+
+    private void handleAppendEntriesResponse(String peerID, AppendEntriesResponse response, int numEntriesSent){
+        lock.lock();
+
+        try{
+            if (currentRole != Role.LEADER) return;
+
+            if (response.term() > currentTerm){
+                currentTerm = response.term();
+                currentRole = Role.FOLLOWER;
+                votedFor = null;
+                return;
+            }
+
+            if (response.success()){
+                int oldNext = nextIndex.get(peerID);
+                nextIndex.put(peerID, oldNext + numEntriesSent);
+                matchIndex.put(peerID, oldNext + numEntriesSent -1);
+            }
+            else{
+                int currentNext = nextIndex.get(peerID);
+                if (currentNext > 0) {
+                    nextIndex.put(peerID, currentNext - 1);
+                }      
+            }
+        }
+        finally{
+            lock.unlock();
+        }
+    }
+
+    public List<LogEntry<T>> getLogCopy() {
+        lock.lock();
+        try {
+            return new ArrayList<>(log); // Return a copy to avoid concurrency issues
         } finally {
             lock.unlock();
         }
