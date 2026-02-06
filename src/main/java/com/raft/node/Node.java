@@ -15,11 +15,11 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-public class Node<T>{
+public class Node<T> {
     private final String nodeID;
     private final List<String> peers;
     private final Network network;
-    private final ExecutorService vThreadExecutor;
+    private ExecutorService vThreadExecutor;
     private final ReentrantLock lock;
     private final Random random;
     private volatile boolean running;
@@ -39,12 +39,16 @@ public class Node<T>{
 
     private Map<String, Integer> nextIndex;
     private Map<String, Integer> matchIndex;
+    private long commitIndex = -1;
+    private long lastApplied = 0;
 
-    public Node(String nodeID, List<String> peers, Network network){
+    
+    private final Map<String, String> stateMachine = new ConcurrentHashMap<>();
+
+    public Node(String nodeID, List<String> peers, Network network) {
         this.nodeID = nodeID;
         this.peers = peers;
         this.network = network;
-        this.vThreadExecutor = Executors.newVirtualThreadPerTaskExecutor();
         this.lock = new ReentrantLock();
         this.random = new Random();
 
@@ -56,70 +60,91 @@ public class Node<T>{
         this.electionTimeout = MIN_TIMEOUT_MS + random.nextInt(MAX_TIMEOUT_MS - MIN_TIMEOUT_MS);
 
         this.lastElectionResetTime = new AtomicLong(System.currentTimeMillis());
-        this.running = true;
-    }
 
-    public void start(){
-        vThreadExecutor.submit(this::runElectionLoop);
-        System.out.println("Node " + nodeID + " started.");
-    }
-
-    public void stop(){
         this.running = false;
-        vThreadExecutor.shutdownNow();
     }
 
-    private void runElectionLoop(){
-        while(running){
-            long timeout = MIN_TIMEOUT_MS + random.nextInt(MAX_TIMEOUT_MS-MIN_TIMEOUT_MS);
+    public void start() {
+        lock.lock();
+        try {
+            if (running) return;
+            this.running = true;
+            this.vThreadExecutor = Executors.newVirtualThreadPerTaskExecutor();
+            this.lastElectionResetTime.set(System.currentTimeMillis());
 
-            try{
-                Thread.sleep(timeout);
+            vThreadExecutor.submit(this::runElectionLoop);
+            System.out.println("Node " + nodeID + " STARTED (Reborn).");
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public void stop() {
+        lock.lock();
+        try {
+            if (!running) return;
+            this.running = false;
+
+            if (vThreadExecutor != null) {
+                vThreadExecutor.shutdownNow();
             }
-            catch (InterruptedException e){
+            System.out.println("Node " + nodeID + " STOPPED (Crash).");
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void runElectionLoop() {
+        while (running) {
+            try {
+                
+                Thread.sleep(20);
+            } catch (InterruptedException e) {
                 if (!running) break;
             }
 
-            long now = System.currentTimeMillis();
-            long elapsed = now - lastElectionResetTime.get();
-            if (elapsed >= timeout){
+            long elapsed = System.currentTimeMillis() - lastElectionResetTime.get();
+            if (elapsed >= electionTimeout) {
                 startElection();
             }
         }
     }
 
-    private void startElection(){
+    private void startElection() {
         lock.lock();
+        try {
+            if (currentRole == Role.LEADER) return;
 
-        try{
-            if (currentRole == Role.LEADER){
-                return;
-            }
-
-            System.out.println("Node " + nodeID + " timeout passed. Starting election for term " + (currentTerm+1));
+            System.out.println("Node " + nodeID + " timeout. Starting election for term " + (currentTerm + 1));
 
             currentRole = Role.CANDIDATE;
             currentTerm += 1;
             votedFor = nodeID;
-
             votesReceived = 1;
-            System.out.println("Node " + nodeID + " starting election for term " + currentTerm);
 
             resetElectionTimer();
 
-            RequestVoteRequest request = new RequestVoteRequest(currentTerm, nodeID, 0, 0);
+            
+            long lastLogIdx = log.size() - 1;
+            long lastLogTerm = 0;
+            if (lastLogIdx >= 0) lastLogTerm = log.get((int) lastLogIdx).term();
 
-            for (String peerID : peers){
-                vThreadExecutor.submit(() -> network.sendRequestVote(peerID, request).thenAccept(this::handleVoteResponse));
+            RequestVoteRequest request = new RequestVoteRequest(currentTerm, nodeID, lastLogIdx, lastLogTerm);
+
+            for (String peerID : peers) {
+                vThreadExecutor.submit(() -> 
+                    network.sendRequestVote(peerID, request)
+                        .thenAccept(this::handleVoteResponse)
+                        .exceptionally(ex -> null) 
+                );
             }
-        }
-        finally{
+        } finally {
             lock.unlock();
         }
     }
 
-    private void runHearthbeatLoop(){
-        while (currentRole == Role.LEADER && running){
+    private void runHearthbeatLoop() {
+        while (currentRole == Role.LEADER && running) {
             long start = System.currentTimeMillis();
 
             sendHearthbeats();
@@ -127,11 +152,10 @@ public class Node<T>{
             long elapsed = System.currentTimeMillis() - start;
             long sleepTime = heartbeatInterval - elapsed;
 
-            if (sleepTime > 0){
-                try{
+            if (sleepTime > 0) {
+                try {
                     Thread.sleep(sleepTime);
-                }
-                catch (InterruptedException e){
+                } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     break;
                 }
@@ -139,28 +163,13 @@ public class Node<T>{
         }
     }
 
-    private void handleHeartbeatResponse(AppendEntriesResponse response) {
+    private void sendHearthbeats() {
         lock.lock();
         try {
-            if (response.term() > currentTerm) {
-                System.out.println("Node " + nodeID + " stepping down (higher term found)");
-                currentTerm = response.term();
-                currentRole = Role.FOLLOWER;
-                votedFor = null;
-            }
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    private void sendHearthbeats(){
-        lock.lock();
-
-        try{
             if (currentRole != Role.LEADER) return;
 
-            for (String peerID : peers){
-                int prevLogIndex = nextIndex.getOrDefault(peerID, 0) -1;
+            for (String peerID : peers) {
+                int prevLogIndex = nextIndex.getOrDefault(peerID, 0) - 1;
                 long prevLogTerm = 0;
 
                 if (prevLogIndex >= 0 && prevLogIndex < log.size()) {
@@ -170,87 +179,94 @@ public class Node<T>{
                 List<LogEntry<T>> entriesToSend = new ArrayList<>();
                 int nextIdx = nextIndex.get(peerID);
 
-                if (nextIdx < log.size()){
+                if (nextIdx < log.size()) {
                     entriesToSend.addAll(log.subList(nextIdx, log.size()));
                 }
 
                 AppendEntriesRequest<T> request = new AppendEntriesRequest<>(
-                    currentTerm,
-                    nodeID,
-                    prevLogIndex,
-                    prevLogTerm,
-                    entriesToSend,
-                    0
+                    currentTerm, nodeID, prevLogIndex, prevLogTerm, entriesToSend, commitIndex
                 );
 
-                vThreadExecutor.submit(() -> network.sendAppendEntries(peerID, request).thenAccept(response -> handleAppendEntriesResponse(peerID, response, entriesToSend.size())));
-
+                vThreadExecutor.submit(() -> 
+                    network.sendAppendEntries(peerID, request)
+                        .thenAccept(response -> handleAppendEntriesResponse(peerID, response, entriesToSend.size()))
+                        .exceptionally(ex -> null) 
+                );
             }
-        }
-        finally{
+        } finally {
             lock.unlock();
         }
     }
 
-    public RequestVoteResponse handleRequestVote(RequestVoteRequest request){
-        lock.lock();
+    public RequestVoteResponse handleRequestVote(RequestVoteRequest request) {
+        if (!running) throw new RuntimeException("Node is down");
 
-        try{
-            if (request.term() > currentTerm){
+        lock.lock();
+        try {
+            if (request.term() > currentTerm) {
                 currentTerm = request.term();
                 currentRole = Role.FOLLOWER;
                 votedFor = null;
             }
 
+            if (request.term() < currentTerm) {
+                return new RequestVoteResponse(currentTerm, false);
+            }
+
+            
+            long myLastLogIndex = log.size() - 1;
+            long myLastLogTerm = 0;
+            if (myLastLogIndex >= 0) {
+                myLastLogTerm = log.get((int) myLastLogIndex).term();
+            }
+
+            boolean logIsUpToDate = false;
+            if (request.lastLogTerm() > myLastLogTerm) {
+                logIsUpToDate = true;
+            } else if (request.lastLogTerm() == myLastLogTerm && request.lastLogIndex() >= myLastLogIndex) {
+                logIsUpToDate = true;
+            }
+            
+
             boolean voteGranted = false;
 
-            if (request.term() < currentTerm){
-                voteGranted = false;
-            }
-            else if (votedFor == null || votedFor.equals(request.candidateId())){
+            if ((votedFor == null || votedFor.equals(request.candidateId())) && logIsUpToDate) {
                 votedFor = request.candidateId();
                 voteGranted = true;
                 resetElectionTimer();
             }
 
             return new RequestVoteResponse(currentTerm, voteGranted);
-        }
-        finally{
+        } finally {
             lock.unlock();
         }
     }
 
-    private void handleVoteResponse(RequestVoteResponse response){
-        lock.lock();
+    private void handleVoteResponse(RequestVoteResponse response) {
+        if (response == null) return; 
 
-        try{
-            if (response.term() > currentTerm){
+        lock.lock();
+        try {
+            if (response.term() > currentTerm) {
                 currentRole = Role.FOLLOWER;
                 currentTerm = response.term();
                 votedFor = null;
                 return;
             }
 
-            if (currentRole != Role.CANDIDATE){
-                return;
-            }
-
-            if (response.voteGranted()){
+            if (currentRole == Role.CANDIDATE && response.voteGranted()) {
                 votesReceived += 1;
-                int clusterSize = peers.size() + 1;
-                int quorum = (clusterSize / 2) + 1;
-
-                if (votesReceived >= quorum){
+                int quorum = (peers.size() + 1) / 2 + 1;
+                if (votesReceived >= quorum) {
                     becomeLeader();
                 }
             }
-        }
-        finally{
+        } finally {
             lock.unlock();
         }
     }
 
-    private void becomeLeader(){
+    private void becomeLeader() {
         if (currentRole == Role.LEADER) return;
 
         currentRole = Role.LEADER;
@@ -259,7 +275,7 @@ public class Node<T>{
         nextIndex = new ConcurrentHashMap<>();
         matchIndex = new ConcurrentHashMap<>();
 
-        for (String peerID : peers){
+        for (String peerID : peers) {
             nextIndex.put(peerID, log.size());
             matchIndex.put(peerID, -1);
         }
@@ -267,42 +283,9 @@ public class Node<T>{
         vThreadExecutor.submit(this::runHearthbeatLoop);
     }
 
-    public void resetElectionTimer(){
-        this.lastElectionResetTime.set(System.currentTimeMillis());
-    }
-
-    public Role getRole(){
-        lock.lock();
-        try{
-            return currentRole;
-        }
-        finally{
-            lock.unlock();
-        }
-    }
-
-    public long getTerm(){
-        lock.lock();
-        try{
-            return currentTerm;
-        }
-        finally{
-            lock.unlock();
-        }
-    }
-
-    public String getNodeID(){
-        lock.lock();
-
-        try{
-            return nodeID;
-        }
-        finally{
-            lock.unlock();
-        }
-    }
-
     public AppendEntriesResponse handleAppendEntries(AppendEntriesRequest<?> request) {
+        if (!running) throw new RuntimeException("Node is down");
+
         lock.lock();
         try {
             if (request.term() < currentTerm) {
@@ -314,13 +297,44 @@ public class Node<T>{
                 currentRole = Role.FOLLOWER;
                 votedFor = null;
             }
-            
+
             resetElectionTimer();
-            
-            List<LogEntry<T>> newEntries = (List<LogEntry<T>>)(List<?>) request.entries();
-            if (!newEntries.isEmpty()) {
-                log.addAll(newEntries);
-                System.out.println("Node " + nodeID + " replicated " + newEntries.size() + " entries.");
+
+            long prevLogIndex = request.prevLogIndex();
+            long prevLogTerm = request.prevLogTerm();
+
+            if (prevLogIndex > -1 && log.size() <= prevLogIndex) {
+                return new AppendEntriesResponse(currentTerm, false);
+            }
+
+            if (prevLogIndex > -1) {
+                LogEntry<T> entryAtPrev = log.get((int) prevLogIndex);
+                if (entryAtPrev.term() != prevLogTerm) {
+                    return new AppendEntriesResponse(currentTerm, false);
+                }
+            }
+
+            @SuppressWarnings("unchecked")
+            List<LogEntry<T>> newEntries = (List<LogEntry<T>>) (List<?>) request.entries();
+            long indexToInsert = prevLogIndex + 1;
+
+            for (LogEntry<T> entry : newEntries) {
+                if (indexToInsert < log.size()) {
+                    LogEntry<T> existingEntry = log.get((int) indexToInsert);
+                    if (existingEntry.term() != entry.term()) {
+                        log.subList((int) indexToInsert, log.size()).clear();
+                        log.add(entry);
+                    }
+                } else {
+                    log.add(entry);
+                }
+                indexToInsert++;
+            }
+
+            if (request.leaderCommit() > commitIndex) {
+                long lastNewIndex = log.size() - 1;
+                commitIndex = Math.min(request.leaderCommit(), lastNewIndex);
+                applyLog();
             }
 
             return new AppendEntriesResponse(currentTerm, true);
@@ -328,63 +342,133 @@ public class Node<T>{
             lock.unlock();
         }
     }
-    public boolean propose(T command){
+
+    private void handleAppendEntriesResponse(String peerID, AppendEntriesResponse response, int numEntriesSent) {
+        if (response == null) return; 
+
         lock.lock();
-
-        try{
-            if (currentRole != Role.LEADER){
-                return false;
-            }
-
-            LogEntry<T> entry = new LogEntry<>(currentTerm, command);
-            log.add(entry);
-
-            // TODO: decide if to send an hearthbeat to reset the connection
-            sendHearthbeats();
-
-            return true;
-        }
-        finally{
-            lock.unlock();
-        }
-    }
-
-    private void handleAppendEntriesResponse(String peerID, AppendEntriesResponse response, int numEntriesSent){
-        lock.lock();
-
-        try{
+        try {
             if (currentRole != Role.LEADER) return;
 
-            if (response.term() > currentTerm){
+            if (response.term() > currentTerm) {
                 currentTerm = response.term();
                 currentRole = Role.FOLLOWER;
                 votedFor = null;
                 return;
             }
 
-            if (response.success()){
+            if (response.success()) {
                 int oldNext = nextIndex.get(peerID);
-                nextIndex.put(peerID, oldNext + numEntriesSent);
-                matchIndex.put(peerID, oldNext + numEntriesSent -1);
-            }
-            else{
+                int newNext = oldNext + numEntriesSent;
+                nextIndex.put(peerID, newNext);
+                matchIndex.put(peerID, newNext - 1);
+                updateCommitIndex();
+            } else {
                 int currentNext = nextIndex.get(peerID);
                 if (currentNext > 0) {
                     nextIndex.put(peerID, currentNext - 1);
-                }      
+                }
             }
-        }
-        finally{
+        } finally {
             lock.unlock();
         }
     }
 
-    public List<LogEntry<T>> getLogCopy() {
+    public boolean propose(T command) {
         lock.lock();
         try {
-            return new ArrayList<>(log); // Return a copy to avoid concurrency issues
+            if (currentRole != Role.LEADER) return false;
+            LogEntry<T> entry = new LogEntry<>(currentTerm, command);
+            log.add(entry);
+            
+            return true;
         } finally {
             lock.unlock();
         }
+    }
+
+    public void updateCommitIndex() {
+        List<Integer> indexes = new ArrayList<>();
+        indexes.add(log.size() - 1);
+        indexes.addAll(matchIndex.values());
+        indexes.sort(Integer::compareTo);
+        int commitThreshold = indexes.size() / 2;
+        int N = indexes.get(commitThreshold);
+
+        if (N > commitIndex && N < log.size()) {
+            LogEntry<T> entry = log.get(N);
+            if (entry.term() == currentTerm) {
+                commitIndex = N;
+                applyLog();
+            }
+        }
+    }
+
+    
+    private void applyLog() {
+        while (lastApplied <= commitIndex && lastApplied < log.size()) {
+            if (log.isEmpty()) break;
+            LogEntry<T> entry = log.get((int) lastApplied);
+            
+            
+            if (entry.command() instanceof String cmd) {
+                applyCommand(cmd);
+            } else {
+                System.out.println("NODE " + nodeID + " EXECUTED GENERIC: " + entry.command());
+            }
+            lastApplied++;
+        }
+    }
+
+    private void applyCommand(String command) {
+        try {
+            if (command.startsWith("SET ")) {
+                String[] parts = command.substring(4).split("=");
+                if (parts.length == 2) {
+                    stateMachine.put(parts[0].trim(), parts[1].trim());
+                    System.out.println("✅ NODE " + nodeID + " APPLIED DB: " + parts[0] + "=" + parts[1]);
+                }
+            } else if (command.startsWith("DEL ")) {
+                String key = command.substring(4).trim();
+                stateMachine.remove(key);
+            }
+        } catch (Exception e) {
+            System.err.println("Error applying command: " + command);
+        }
+    }
+
+    
+    public String get(String key) {
+        return stateMachine.get(key);
+    }
+    
+
+    
+    public void resetElectionTimer() {
+        this.lastElectionResetTime.set(System.currentTimeMillis());
+    }
+    public Role getRole() {
+        lock.lock();
+        try { return currentRole; } finally { lock.unlock(); }
+    }
+    public long getTerm() {
+        lock.lock();
+        try { return currentTerm; } finally { lock.unlock(); }
+    }
+    public String getNodeID() {
+        lock.lock();
+        try { return nodeID; } finally { lock.unlock(); }
+    }
+    public List<LogEntry<T>> getLogCopy() {
+        lock.lock();
+        try { return new ArrayList<>(log); } finally { lock.unlock(); }
+    }
+    public long getCommitIndex() {
+        lock.lock();
+        try { return commitIndex; } finally { lock.unlock(); }
+    }
+    public long getLastApplied() {
+        lock.lock();
+        try { return lastApplied; } finally { lock.unlock(); }
     }
 }

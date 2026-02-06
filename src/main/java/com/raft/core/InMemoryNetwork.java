@@ -27,18 +27,18 @@ public class InMemoryNetwork implements Network {
 
     @Override
     public CompletableFuture<RequestVoteResponse> sendRequestVote(String targetNodeId, RequestVoteRequest request) {
-        // NON usiamo più supplyAsync. Eseguiamo direttamente nel thread del chiamante.
-        // Poiché il chiamante è un Virtual Thread (dentro Node), questo è efficientissimo.
+        
+        
         try {
             if (simulateLatency) simulateNetworkDelay();
             
             Node<?> target = nodes.get(targetNodeId);
             if (target == null) {
-                 // Invece di lanciare eccezione che rompe il thread, restituiamo una future fallita
+                 
                 return CompletableFuture.failedFuture(new RuntimeException("Node unreachable"));
             }
             
-            // Chiamata diretta (Method Call invece di RPC)
+            
             RequestVoteResponse response = target.handleRequestVote(request);
             return CompletableFuture.completedFuture(response);
 
@@ -70,8 +70,8 @@ public class InMemoryNetwork implements Network {
 
     private void simulateNetworkDelay() {
         try {
-            // Latenza leggera: 5-20ms.
-            // Grazie ai Virtual Threads, questo sleep NON blocca il sistema operativo.
+            
+            
             int delay = 5 + random.nextInt(15);
             TimeUnit.MILLISECONDS.sleep(delay);
         } catch (InterruptedException e) {
