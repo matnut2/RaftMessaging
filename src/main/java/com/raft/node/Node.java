@@ -2,8 +2,12 @@ package com.raft.node;
 
 import com.raft.core.LogEntry;
 import com.raft.core.Role;
+import com.raft.core.Snapshot;
 import com.raft.core.Network;
 import com.raft.rpc.*;
+import com.raft.core.Storage;
+import com.raft.core.FileStorage;
+import com.raft.core.PersistentState;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -23,6 +27,7 @@ public class Node<T> {
     private final ReentrantLock lock;
     private final Random random;
     private volatile boolean running;
+    private final Storage<T> storage;
 
     private final AtomicLong lastElectionResetTime;
     private final int MIN_TIMEOUT_MS = 150;
@@ -42,6 +47,9 @@ public class Node<T> {
     private long commitIndex = -1;
     private long lastApplied = 0;
 
+    private long lastIncludedIndex = -1;
+    private long lastIncludedTerm = 0;
+
     
     private final Map<String, String> stateMachine = new ConcurrentHashMap<>();
 
@@ -52,9 +60,23 @@ public class Node<T> {
         this.lock = new ReentrantLock();
         this.random = new Random();
 
-        this.currentTerm = 0;
-        this.votedFor = null;
-        this.log = new ArrayList<>();
+        this.storage = new FileStorage<T>(nodeID);
+        
+        Snapshot snap = storage.loadSnapshot();
+        
+        if (snap != null){
+            this.lastIncludedIndex = snap.lastIncludedIndex();
+            this.lastIncludedTerm = snap.lastIncludedTerm();
+            this.stateMachine.putAll(snap.data());
+            this.lastApplied = lastIncludedIndex;
+            this.commitIndex = lastIncludedIndex;
+        }
+        
+        
+        PersistentState<T> state = storage.load();
+        this.currentTerm = state.term();
+        this.votedFor = state.votedFor();
+        this.log = new ArrayList<>(state.log());
 
         this.currentRole = Role.FOLLOWER;
         this.electionTimeout = MIN_TIMEOUT_MS + random.nextInt(MAX_TIMEOUT_MS - MIN_TIMEOUT_MS);
@@ -63,6 +85,40 @@ public class Node<T> {
 
         this.running = false;
     }
+
+    private void persist(){
+        storage.save(currentTerm, votedFor, log);
+    }
+
+    public void takeSnapshot() {
+    lock.lock();
+    try {
+        if (lastApplied <= lastIncludedIndex) return;
+
+        long snapshotIndex = lastApplied;
+        
+        LogEntry<T> entry = getEntry(snapshotIndex);
+        if (entry == null) return;
+        long snapshotTerm = entry.term();
+
+        System.out.println("Node " + nodeID + " taking snapshot at index " + snapshotIndex);
+        Snapshot newSnap = new Snapshot(snapshotIndex, snapshotTerm, new ConcurrentHashMap<>(stateMachine));
+        storage.saveSnapshot(newSnap);
+        int localCutIndex = getLocalIndex(snapshotIndex); 
+        List<LogEntry<T>> remaining = new ArrayList<>(log.subList(localCutIndex + 1, log.size()));
+        
+        log.clear();
+        log.addAll(remaining);
+
+        lastIncludedIndex = snapshotIndex;
+        lastIncludedTerm = snapshotTerm;
+
+        persist(); 
+
+    } finally {
+        lock.unlock();
+    }
+}
 
     public void start() {
         lock.lock();
@@ -207,6 +263,7 @@ public class Node<T> {
                 currentTerm = request.term();
                 currentRole = Role.FOLLOWER;
                 votedFor = null;
+                persist();
             }
 
             if (request.term() < currentTerm) {
@@ -234,6 +291,7 @@ public class Node<T> {
                 votedFor = request.candidateId();
                 voteGranted = true;
                 resetElectionTimer();
+                persist();
             }
 
             return new RequestVoteResponse(currentTerm, voteGranted);
@@ -325,6 +383,7 @@ public class Node<T> {
                         log.subList((int) indexToInsert, log.size()).clear();
                         log.add(entry);
                     }
+                    persist();;
                 } else {
                     log.add(entry);
                 }
@@ -380,7 +439,7 @@ public class Node<T> {
             if (currentRole != Role.LEADER) return false;
             LogEntry<T> entry = new LogEntry<>(currentTerm, command);
             log.add(entry);
-            
+            persist();
             return true;
         } finally {
             lock.unlock();
@@ -442,8 +501,6 @@ public class Node<T> {
         return stateMachine.get(key);
     }
     
-
-    
     public void resetElectionTimer() {
         this.lastElectionResetTime.set(System.currentTimeMillis());
     }
@@ -471,4 +528,37 @@ public class Node<T> {
         lock.lock();
         try { return lastApplied; } finally { lock.unlock(); }
     }
+
+    private int getLocalIndex(long raftLogIndex) {
+        return (int) (raftLogIndex - lastIncludedIndex - 1);
+    }
+
+    private LogEntry<T> getEntry(long raftLogIndex) {
+        int localIdx = getLocalIndex(raftLogIndex);
+        if (localIdx < 0 || localIdx >= log.size()) {
+            return null; 
+        }
+        return log.get(localIdx);
+    }
+
+    private long getTermForIndex(long index) {
+        if (index == -1) return 0;
+        if (index == lastIncludedIndex) {
+            return lastIncludedTerm;
+        }
+        LogEntry<T> entry = getEntry(index);
+        return (entry != null) ? entry.term() : 0;
+    }
+
+    private long getLastLogIndex() {
+        return lastIncludedIndex + log.size();
+    }
+
+    private long getLastLogTerm() {
+        if (log.isEmpty()) {
+            return lastIncludedTerm;
+        }
+        return log.get(log.size() - 1).term();
+    }
+
 }
