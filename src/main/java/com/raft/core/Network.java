@@ -2,6 +2,8 @@ package com.raft.core;
 
 import com.raft.rpc.AppendEntriesRequest;
 import com.raft.rpc.AppendEntriesResponse;
+import com.raft.rpc.InstallSnapshotRequest;
+import com.raft.rpc.InstallSnapshotResponse;
 import com.raft.rpc.RequestVoteRequest;
 import com.raft.rpc.RequestVoteResponse;
 
@@ -14,8 +16,8 @@ public interface Network {
      * @param request The RPC payload.
      * @return A Future containing the response.
      */
-
-        CompletableFuture<RequestVoteResponse> sendRequestVote(String targetNodeID, RequestVoteRequest request);
+    CompletableFuture<RequestVoteResponse> sendRequestVote(String targetNodeID, RequestVoteRequest request);
+    
     /**
      * Sends an AppendEntries RPC (log replication or heartbeat).
      * @param targetNodeId The ID of the receiving node.
@@ -24,5 +26,7 @@ public interface Network {
      */
 
     CompletableFuture<AppendEntriesResponse> sendAppendEntries(String targetNodeID, AppendEntriesRequest request);
+
+    CompletableFuture<InstallSnapshotResponse> sendInstallSnapshot(String targetNodeID, InstallSnapshotRequest request);
 
     } 
