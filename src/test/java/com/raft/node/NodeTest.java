@@ -31,6 +31,11 @@ public class NodeTest {
         public CompletableFuture<InstallSnapshotResponse> sendInstallSnapshot(String targetNodeID, InstallSnapshotRequest r){
             return CompletableFuture.completedFuture(new InstallSnapshotResponse(0));
         }
+
+        @Override
+        public CompletableFuture<String> sendClientGet(String targetNodeID, String key) {
+            return CompletableFuture.completedFuture(null);
+        }
     };
 
     @BeforeEach

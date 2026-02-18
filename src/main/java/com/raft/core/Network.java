@@ -29,4 +29,5 @@ public interface Network {
 
     CompletableFuture<InstallSnapshotResponse> sendInstallSnapshot(String targetNodeID, InstallSnapshotRequest request);
 
-    } 
+    CompletableFuture<String> sendClientGet(String targetNodeId, String key);
+} 

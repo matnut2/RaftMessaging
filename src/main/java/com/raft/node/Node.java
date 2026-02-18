@@ -15,9 +15,11 @@ import java.util.List;
 import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class Node<T> implements RaftMessageReceiver{
@@ -50,6 +52,8 @@ public class Node<T> implements RaftMessageReceiver{
 
     private long lastIncludedIndex = -1;
     private long lastIncludedTerm = 0;
+
+    private volatile String currentLeaderID;
 
     
     private final Map<String, String> stateMachine = new ConcurrentHashMap<>();
@@ -171,6 +175,8 @@ public class Node<T> implements RaftMessageReceiver{
         lock.lock();
         try {
             if (currentRole == Role.LEADER) return;
+
+            currentLeaderID = null;
 
             System.out.println("Node " + nodeID + " timeout. Starting election for term " + (currentTerm + 1));
 
@@ -400,6 +406,7 @@ public class Node<T> implements RaftMessageReceiver{
                 currentTerm = request.term();
                 currentRole = Role.FOLLOWER;
                 votedFor = null;
+                currentLeaderID = request.leaderId();
             }
 
             resetElectionTimer();
@@ -544,6 +551,39 @@ public class Node<T> implements RaftMessageReceiver{
 
     
     public String get(String key) {
+        if (getRole() != Role.LEADER) {
+            String leader = currentLeaderID;
+
+            if (leader == null) 
+                throw new RuntimeException("Service Unavailable: NO Leader Known");
+            
+            try{
+                return network.sendClientGet(leader, key).join();
+            }
+            catch (Exception e){
+                throw new RuntimeException("Error forwarding request to leader " + leader, e);
+            }
+        }
+
+        lock.lock();
+        long readIndex = commitIndex;
+        lock.unlock();
+
+        boolean isLeader = confirmLeadership().join();
+
+        if (!isLeader) {
+            throw new RuntimeException("Read failed: lost leadership or quorum unreachable");
+        }
+
+        while (getLastApplied() < readIndex) {
+            try {
+                Thread.sleep(1);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Interrupted while waiting for apply");
+            }
+        }
+
         return stateMachine.get(key);
     }
     
@@ -620,6 +660,8 @@ public class Node<T> implements RaftMessageReceiver{
                 currentTerm = request.term();
                 currentRole = Role.FOLLOWER;
                 votedFor = null;
+                currentLeaderID = request.leaderId();
+                persist();
             }
 
             resetElectionTimer();
@@ -661,4 +703,44 @@ public class Node<T> implements RaftMessageReceiver{
         }
     }
 
+    private CompletableFuture<Boolean> confirmLeadership() {
+        if (currentRole != Role.LEADER) {
+            return CompletableFuture.completedFuture(false);
+        }
+
+        AtomicInteger acks = new AtomicInteger(1);
+        int quorum = (peers.size() + 1) / 2 + 1;
+        CompletableFuture<Boolean> result = new CompletableFuture<>();
+
+        // Inviamo un heartbeat rapido a tutti
+        AppendEntriesRequest<T> heartbeat = new AppendEntriesRequest<>(
+            currentTerm, nodeID, getLastLogIndex(), getLastLogTerm(), new ArrayList<>(), commitIndex
+        );
+
+        for (String peer : peers) {
+            vThreadExecutor.submit(() -> 
+                network.sendAppendEntries(peer, heartbeat)
+                    .thenAccept(response -> {
+                        if (response != null && response.success()) {
+                            if (acks.incrementAndGet() >= quorum) {
+                                result.complete(true);
+                            }
+                        }
+                    })
+                    .exceptionally(e -> null)
+            );
+        }
+        
+        vThreadExecutor.submit(() -> {
+            try {
+                Thread.sleep(electionTimeout / 2); 
+                if (!result.isDone()) {
+                    result.complete(false);
+                }
+            } catch (InterruptedException e) { /* ignore */ }
+        });
+
+        return result;
+    }
 }
+

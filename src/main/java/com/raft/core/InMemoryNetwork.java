@@ -92,6 +92,28 @@ public class InMemoryNetwork implements Network {
         }
     }
 
+    @Override
+    public CompletableFuture<String> sendClientGet(String targetNodeId, String key){
+        try{
+            if (simulateLatency) simulateNetworkDelay();
+
+            Node<?> target = (Node<?>) nodes.get(targetNodeId);
+
+            if (target == null)
+                return CompletableFuture.failedFuture(new RuntimeException("Node Unreachable"));
+
+            @SuppressWarnings("rawtypes")
+            Node rawTarget = (Node) target;
+
+            String result = rawTarget.get(key);
+                return CompletableFuture.completedFuture(result);
+
+            } 
+            catch (Exception e) {
+                return CompletableFuture.failedFuture(e);
+        }
+    }   
+
     private void simulateNetworkDelay() {
         try {
             
@@ -102,4 +124,5 @@ public class InMemoryNetwork implements Network {
             Thread.currentThread().interrupt();
         }
     }
+
 }
