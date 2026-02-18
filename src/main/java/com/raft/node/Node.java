@@ -220,84 +220,84 @@ public class Node<T> {
     }
 
     private void sendHearthbeats() {
+    lock.lock();
+    try {
+        if (currentRole != Role.LEADER) return;
+
+        for (String peerID : peers) {
+            int nextIdx = nextIndex.getOrDefault(peerID, 1);
+            
+            if (nextIdx <= lastIncludedIndex) {
+                sendSnapshotToPeer(peerID);
+            } else {
+                sendAppendEntriesToPeer(peerID, nextIdx);
+            }
+        }
+    } finally {
+        lock.unlock();
+    }
+}
+
+
+    private void sendSnapshotToPeer(String peerID) {
+        InstallSnapshotRequest request = new InstallSnapshotRequest(
+            currentTerm,
+            nodeID,
+            lastIncludedIndex,
+            lastIncludedTerm,
+            new ConcurrentHashMap<>(stateMachine) // Copia della mappa
+        );
+
+        vThreadExecutor.submit(() -> 
+            network.sendInstallSnapshot(peerID, request)
+                .thenAccept(response -> handleInstallSnapshotResponse(peerID, response))
+                .exceptionally(ex -> null)
+        );
+    }
+
+    private void handleInstallSnapshotResponse(String peerID, InstallSnapshotResponse response) {
+        if (response == null) return;
         lock.lock();
         try {
             if (currentRole != Role.LEADER) return;
 
-            for (String peerID : peers) {
-                int prevLogIndex = nextIndex.getOrDefault(peerID, 0) - 1;
-                long prevLogTerm = 0;
-
-                if (prevLogIndex >= 0 && prevLogIndex < log.size()) {
-                    prevLogTerm = log.get(prevLogIndex).term();
-                }
-
-                List<LogEntry<T>> entriesToSend = new ArrayList<>();
-                int nextIdx = nextIndex.get(peerID);
-
-                if (nextIdx < log.size()) {
-                    entriesToSend.addAll(log.subList(nextIdx, log.size()));
-                }
-
-                AppendEntriesRequest<T> request = new AppendEntriesRequest<>(
-                    currentTerm, nodeID, prevLogIndex, prevLogTerm, entriesToSend, commitIndex
-                );
-
-                vThreadExecutor.submit(() -> 
-                    network.sendAppendEntries(peerID, request)
-                        .thenAccept(response -> handleAppendEntriesResponse(peerID, response, entriesToSend.size()))
-                        .exceptionally(ex -> null) 
-                );
+            if (response.term() > currentTerm) {
+                currentTerm = response.term();
+                currentRole = Role.FOLLOWER;
+                votedFor = null;
+                persist();
+                return;
             }
+
+            nextIndex.put(peerID, (int)lastIncludedIndex + 1);
+            matchIndex.put(peerID, (int)lastIncludedIndex);
+            
         } finally {
             lock.unlock();
         }
     }
 
-    public RequestVoteResponse handleRequestVote(RequestVoteRequest request) {
-        if (!running) throw new RuntimeException("Node is down");
+    private void sendAppendEntriesToPeer(String peerID, int nextIdx) {
+        long prevLogIndex = nextIdx - 1;
+        long prevLogTerm = getTermForIndex(prevLogIndex);
 
-        lock.lock();
-        try {
-            if (request.term() > currentTerm) {
-                currentTerm = request.term();
-                currentRole = Role.FOLLOWER;
-                votedFor = null;
-                persist();
-            }
+        List<LogEntry<T>> entriesToSend = new ArrayList<>();
 
-            if (request.term() < currentTerm) {
-                return new RequestVoteResponse(currentTerm, false);
-            }
-
-            
-            long myLastLogIndex = log.size() - 1;
-            long myLastLogTerm = 0;
-            if (myLastLogIndex >= 0) {
-                myLastLogTerm = log.get((int) myLastLogIndex).term();
-            }
-
-            boolean logIsUpToDate = false;
-            if (request.lastLogTerm() > myLastLogTerm) {
-                logIsUpToDate = true;
-            } else if (request.lastLogTerm() == myLastLogTerm && request.lastLogIndex() >= myLastLogIndex) {
-                logIsUpToDate = true;
-            }
-            
-
-            boolean voteGranted = false;
-
-            if ((votedFor == null || votedFor.equals(request.candidateId())) && logIsUpToDate) {
-                votedFor = request.candidateId();
-                voteGranted = true;
-                resetElectionTimer();
-                persist();
-            }
-
-            return new RequestVoteResponse(currentTerm, voteGranted);
-        } finally {
-            lock.unlock();
+        int localStartIndex = getLocalIndex(nextIdx);
+        
+        if (localStartIndex >= 0 && localStartIndex < log.size()) {
+            entriesToSend.addAll(log.subList(localStartIndex, log.size()));
         }
+
+        AppendEntriesRequest<T> request = new AppendEntriesRequest<>(
+            currentTerm, nodeID, prevLogIndex, prevLogTerm, entriesToSend, commitIndex
+        );
+
+        vThreadExecutor.submit(() -> 
+            network.sendAppendEntries(peerID, request)
+                .thenAccept(response -> handleAppendEntriesResponse(peerID, response, entriesToSend.size()))
+                .exceptionally(ex -> null) 
+        );
     }
 
     private void handleVoteResponse(RequestVoteResponse response) {
@@ -559,6 +559,60 @@ public class Node<T> {
             return lastIncludedTerm;
         }
         return log.get(log.size() - 1).term();
+    }
+
+    public InstallSnapshotResponse handleInstallSnapshot(InstallSnapshotRequest request){
+        if (!running) throw new RuntimeException("Node is down");
+        lock.lock();
+
+        try{
+            if (request.term() < currentTerm){
+                return new InstallSnapshotResponse(currentTerm);
+            }
+
+            if (request.term() > currentTerm){
+                currentTerm = request.term();
+                currentRole = Role.FOLLOWER;
+                votedFor = null;
+            }
+
+            resetElectionTimer();
+
+            if (request.lastIncludedIndex() <= lastIncludedIndex){
+                return new InstallSnapshotResponse(currentTerm);
+            }
+
+            System.out.println("Node " + nodeID + " installing snapshot from Leader. LastIndex: " + request.lastIncludedIndex());
+            
+            this.lastIncludedIndex = request.lastIncludedIndex();
+            this.lastIncludedTerm = request.lastIncludedTerm();
+
+            this.stateMachine.clear();
+            this.stateMachine.putAll(request.data());
+
+            int localCutIndex = getLocalIndex(request.lastIncludedIndex());
+
+            if (localCutIndex >= 0 && localCutIndex < log.size()){
+                List<LogEntry<T>> remaining = new ArrayList<>(log.subList(localCutIndex+1, log.size()));
+                log.clear();
+                log.addAll(remaining);
+            }
+            else{
+                log.clear();
+            }
+
+            this.lastApplied = request.lastIncludedIndex();
+            this.commitIndex = Math.max(commitIndex, request.lastIncludedIndex());
+
+            Snapshot newSnap = new Snapshot(lastIncludedIndex, lastIncludedTerm, new ConcurrentHashMap<>(stateMachine));
+            storage.saveSnapshot(newSnap);
+            persist();
+
+            return new InstallSnapshotResponse(currentTerm);
+        }
+        finally{
+            lock.unlock();
+        }
     }
 
 }
