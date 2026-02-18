@@ -6,6 +6,7 @@ import com.raft.core.Role;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -22,8 +23,20 @@ public class RaftIntegrationTest {
         
         cluster.forEach(Node::stop);
         cluster.clear();
+
+        deleteNodeFiles("A");
+        deleteNodeFiles("B");
+        deleteNodeFiles("C");
     }
 
+    private void deleteNodeFiles(String nodeId) {
+        try {
+            new File("raft_node_" + nodeId + ".dat").delete();
+            new File("raft_node_" + nodeId + ".snapshot").delete();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
     @Test
     void clusterShouldElectLeaderAndStabilize() throws InterruptedException {
         
@@ -247,18 +260,6 @@ public class RaftIntegrationTest {
         
         
         assertThat(follower.getLogCopy()).hasSize(1);
-
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
         leader.propose("Y=2");
         Thread.sleep(500);
         assertThat(follower.getLogCopy()).hasSize(2);

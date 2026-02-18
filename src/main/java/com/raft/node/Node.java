@@ -96,7 +96,7 @@ public class Node<T> implements RaftMessageReceiver{
     try {
         if (lastApplied <= lastIncludedIndex) return;
 
-        long snapshotIndex = lastApplied;
+        long snapshotIndex = lastApplied-1;
         
         LogEntry<T> entry = getEntry(snapshotIndex);
         if (entry == null) return;

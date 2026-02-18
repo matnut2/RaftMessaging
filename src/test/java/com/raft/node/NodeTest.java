@@ -14,6 +14,7 @@ import java.util.concurrent.CompletableFuture;
 
 public class NodeTest {
     private Node<String> node;
+    
     private final Network network = new Network() {
         
         @Override
@@ -24,6 +25,11 @@ public class NodeTest {
         @Override
         public CompletableFuture<AppendEntriesResponse> sendAppendEntries(String targetNodeID, AppendEntriesRequest r){
             return CompletableFuture.completedFuture(new AppendEntriesResponse(0, false));
+        }
+
+        @Override
+        public CompletableFuture<InstallSnapshotResponse> sendInstallSnapshot(String targetNodeID, InstallSnapshotRequest r){
+            return CompletableFuture.completedFuture(new InstallSnapshotResponse(0));
         }
     };
 

@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.io.File;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -18,7 +19,18 @@ public class RaftKVTest {
     void tearDown() {
         cluster.forEach(Node::stop);
         cluster.clear();
+        deleteNodeFiles("A");
+        deleteNodeFiles("B");
+        deleteNodeFiles("C");
     }
+    private void deleteNodeFiles(String nodeId) {
+    try {
+        new File("raft_node_" + nodeId + ".dat").delete();
+        new File("raft_node_" + nodeId + ".snapshot").delete();
+    } catch (Exception e) {
+        e.printStackTrace();
+    }
+}
 
     @Test
     void clusterShouldActAsKeyValueStore() throws InterruptedException {
