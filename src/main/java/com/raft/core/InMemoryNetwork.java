@@ -31,15 +31,18 @@ public class InMemoryNetwork implements Network {
     public CompletableFuture<RequestVoteResponse> sendRequestVote(String targetNodeId, RequestVoteRequest request) {
         try {
             if (simulateLatency) simulateNetworkDelay();
+        
+            var target = nodes.get(targetNodeId);
             
-            Node<?> target = nodes.get(targetNodeId);
             if (target == null) {
                 return CompletableFuture.failedFuture(new RuntimeException("Node unreachable"));
             }
-            
+        
             @SuppressWarnings("rawtypes")
-            Node rawTarget = (Node) target;
+            com.raft.node.Node rawTarget = (com.raft.node.Node) target;
+            
             RequestVoteResponse response = rawTarget.handleRequestVote(request);
+
             return CompletableFuture.completedFuture(response);
 
         } catch (Exception e) {
