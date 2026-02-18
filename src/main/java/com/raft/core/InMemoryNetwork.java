@@ -3,6 +3,8 @@ package com.raft.core;
 import com.raft.node.Node;
 import com.raft.rpc.AppendEntriesRequest;
 import com.raft.rpc.AppendEntriesResponse;
+import com.raft.rpc.InstallSnapshotRequest;
+import com.raft.rpc.InstallSnapshotResponse;
 import com.raft.rpc.RequestVoteRequest;
 import com.raft.rpc.RequestVoteResponse;
 import java.util.Map;
@@ -27,19 +29,17 @@ public class InMemoryNetwork implements Network {
 
     @Override
     public CompletableFuture<RequestVoteResponse> sendRequestVote(String targetNodeId, RequestVoteRequest request) {
-        
-        
         try {
             if (simulateLatency) simulateNetworkDelay();
             
             Node<?> target = nodes.get(targetNodeId);
             if (target == null) {
-                 
                 return CompletableFuture.failedFuture(new RuntimeException("Node unreachable"));
             }
             
-            
-            RequestVoteResponse response = target.handleRequestVote(request);
+            @SuppressWarnings("rawtypes")
+            Node rawTarget = (Node) target;
+            RequestVoteResponse response = rawTarget.handleRequestVote(request);
             return CompletableFuture.completedFuture(response);
 
         } catch (Exception e) {
@@ -64,6 +64,27 @@ public class InMemoryNetwork implements Network {
             return CompletableFuture.completedFuture(response);
 
         } catch (Exception e) {
+            return CompletableFuture.failedFuture(e);
+        }
+    }
+
+    @Override
+    public CompletableFuture<InstallSnapshotResponse> sendInstallSnapshot(String targetNodeID, InstallSnapshotRequest request){
+        try{
+            if (simulateLatency) simulateNetworkDelay();
+
+            Node<?> target = nodes.get(targetNodeID);
+            if (target == null){
+                return CompletableFuture.failedFuture(new RuntimeException("Node Unreachable"));
+            }
+
+            @SuppressWarnings("unchecked")
+            Node<Object> typedTarget = (Node<Object>) target;
+
+            InstallSnapshotResponse response = typedTarget.handleInstallSnapshot(request);
+            return CompletableFuture.completedFuture(response);
+        }
+        catch (Exception e){
             return CompletableFuture.failedFuture(e);
         }
     }
