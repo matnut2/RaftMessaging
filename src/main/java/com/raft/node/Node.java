@@ -8,6 +8,7 @@ import com.raft.rpc.*;
 import com.raft.core.Storage;
 import com.raft.core.FileStorage;
 import com.raft.core.PersistentState;
+import com.raft.core.RaftMessageReceiver;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -19,7 +20,7 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-public class Node<T> {
+public class Node<T> implements RaftMessageReceiver{
     private final String nodeID;
     private final List<String> peers;
     private final Network network;
@@ -298,6 +299,51 @@ public class Node<T> {
                 .thenAccept(response -> handleAppendEntriesResponse(peerID, response, entriesToSend.size()))
                 .exceptionally(ex -> null) 
         );
+    }
+
+    public RequestVoteResponse handleRequestVote(RequestVoteRequest request) {
+        if (!running) throw new RuntimeException("Node is down");
+
+        lock.lock();
+        try {
+            if (request.term() > currentTerm) {
+                currentTerm = request.term();
+                currentRole = Role.FOLLOWER;
+                votedFor = null;
+                persist();
+            }
+            if (request.term() < currentTerm) {
+                return new RequestVoteResponse(currentTerm, false);
+            }
+
+            boolean canVote = (votedFor == null || votedFor.equals(request.candidateId()));
+            boolean logIsUpToDate = false;
+            long lastLogIndex = log.size() - 1 + lastIncludedIndex + 1; // Calcolo indice assoluto
+            long lastLogTerm = 0;
+            if (log.size() > 0) {
+                 lastLogTerm = log.get(log.size() - 1).term();
+            } else {
+                 lastLogTerm = lastIncludedTerm;
+            }
+
+            if (request.lastLogTerm() > lastLogTerm) {
+                logIsUpToDate = true;
+            } else if (request.lastLogTerm() == lastLogTerm && request.lastLogIndex() >= lastLogIndex) {
+                logIsUpToDate = true;
+            }
+
+            boolean voteGranted = false;
+            if (canVote && logIsUpToDate) {
+                votedFor = request.candidateId();
+                voteGranted = true;
+                resetElectionTimer(); 
+                persist();
+            }
+
+            return new RequestVoteResponse(currentTerm, voteGranted);
+        } finally {
+            lock.unlock();
+        }
     }
 
     private void handleVoteResponse(RequestVoteResponse response) {
