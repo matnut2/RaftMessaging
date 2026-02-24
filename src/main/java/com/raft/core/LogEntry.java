@@ -13,4 +13,9 @@ import java.io.Serializable;
  * 
  * @param <T> Type of the command carried by this log entry
  */
-public record LogEntry<T>(long term, T command) implements Serializable {}
+public record LogEntry<T>(
+    long term,
+    String clientID,
+    long sequenceNum,
+    T command
+    ) implements Serializable {}

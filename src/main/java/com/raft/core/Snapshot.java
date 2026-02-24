@@ -6,5 +6,6 @@ import java.util.Map;
 public record Snapshot(
     long lastIncludedIndex,
     long lastIncludedTerm,
-    Map<String, String> data // Lo stato della tua applicazione (StateMachine)
+    Map<String, String> data,
+    Map<String, Long> clientSessions
 ) implements Serializable {}

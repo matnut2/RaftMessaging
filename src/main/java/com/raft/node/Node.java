@@ -21,6 +21,10 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 
 public class Node<T> implements RaftMessageReceiver{
     private final String nodeID;
@@ -36,7 +40,9 @@ public class Node<T> implements RaftMessageReceiver{
     private final int MIN_TIMEOUT_MS = 150;
     private final int MAX_TIMEOUT_MS = 300;
     private final int heartbeatInterval = 50;
+    private final Map<String, Long> clientSession = new ConcurrentHashMap<>();
     private final int electionTimeout;
+    private final ByteArrayOutputStream snapshotBuffer = new ByteArrayOutputStream();
 
     private long currentTerm;
     private String votedFor;
@@ -73,7 +79,8 @@ public class Node<T> implements RaftMessageReceiver{
             this.lastIncludedIndex = snap.lastIncludedIndex();
             this.lastIncludedTerm = snap.lastIncludedTerm();
             this.stateMachine.putAll(snap.data());
-            this.lastApplied = lastIncludedIndex;
+
+            this.lastApplied = lastIncludedIndex+1;
             this.commitIndex = lastIncludedIndex;
         }
         
@@ -107,7 +114,7 @@ public class Node<T> implements RaftMessageReceiver{
         long snapshotTerm = entry.term();
 
         System.out.println("Node " + nodeID + " taking snapshot at index " + snapshotIndex);
-        Snapshot newSnap = new Snapshot(snapshotIndex, snapshotTerm, new ConcurrentHashMap<>(stateMachine));
+        Snapshot newSnap = new Snapshot(snapshotIndex, snapshotTerm, new ConcurrentHashMap<>(stateMachine), new ConcurrentHashMap<>(clientSession));
         storage.saveSnapshot(newSnap);
         int localCutIndex = getLocalIndex(snapshotIndex); 
         List<LogEntry<T>> remaining = new ArrayList<>(log.subList(localCutIndex + 1, log.size()));
@@ -246,22 +253,35 @@ public class Node<T> implements RaftMessageReceiver{
 }
 
 
-    private void sendSnapshotToPeer(String peerID) {
+private void sendSnapshotToPeer(String peerID) {
+        byte[] snapshotBytes = serializeSnapshotState();
+        sendSnapshotChunk(peerID, snapshotBytes, 0);
+    }
+
+    private void sendSnapshotChunk(String peerID, byte[] snapshotBytes, int offset) {
+        int CHUNK_SIZE = 4096; 
+        int length = Math.min(CHUNK_SIZE, snapshotBytes.length - offset);
+        byte[] chunk = new byte[length];
+        System.arraycopy(snapshotBytes, offset, chunk, 0, length);
+        
+        boolean done = (offset + length) >= snapshotBytes.length;
+
         InstallSnapshotRequest request = new InstallSnapshotRequest(
-            currentTerm,
-            nodeID,
-            lastIncludedIndex,
-            lastIncludedTerm,
-            new ConcurrentHashMap<>(stateMachine) // Copia della mappa
+            currentTerm, nodeID, lastIncludedIndex, lastIncludedTerm,
+            offset, chunk, done
         );
 
         vThreadExecutor.submit(() -> 
             network.sendInstallSnapshot(peerID, request)
-                .thenAccept(response -> handleInstallSnapshotResponse(peerID, response))
+                .thenAccept(response -> {
+                    handleInstallSnapshotResponse(peerID, response);
+                    if (response != null && response.term() == currentTerm && !done) {
+                        sendSnapshotChunk(peerID, snapshotBytes, offset + length);
+                    }
+                })
                 .exceptionally(ex -> null)
         );
     }
-
     private void handleInstallSnapshotResponse(String peerID, InstallSnapshotResponse response) {
         if (response == null) return;
         lock.lock();
@@ -324,7 +344,7 @@ public class Node<T> implements RaftMessageReceiver{
 
             boolean canVote = (votedFor == null || votedFor.equals(request.candidateId()));
             boolean logIsUpToDate = false;
-            long lastLogIndex = log.size() - 1 + lastIncludedIndex + 1; // Calcolo indice assoluto
+            long lastLogIndex = log.size() - 1 + lastIncludedIndex + 1;
             long lastLogTerm = 0;
             if (log.size() > 0) {
                  lastLogTerm = log.get(log.size() - 1).term();
@@ -385,9 +405,10 @@ public class Node<T> implements RaftMessageReceiver{
         nextIndex = new ConcurrentHashMap<>();
         matchIndex = new ConcurrentHashMap<>();
 
+        int absoluteNextIndex = (int) (lastIncludedIndex + log.size() + 1);
+
         for (String peerID : peers) {
-            nextIndex.put(peerID, log.size());
-            matchIndex.put(peerID, -1);
+            nextIndex.put(peerID, absoluteNextIndex);            matchIndex.put(peerID, -1);
         }
 
         vThreadExecutor.submit(this::runHearthbeatLoop);
@@ -486,11 +507,16 @@ public class Node<T> implements RaftMessageReceiver{
         }
     }
 
-    public boolean propose(T command) {
+    public boolean propose(String clientID, long sequenceNum, T command) {
         lock.lock();
         try {
             if (currentRole != Role.LEADER) return false;
-            LogEntry<T> entry = new LogEntry<>(currentTerm, command);
+
+            if (clientSession.getOrDefault(clientID, -1L) >= sequenceNum){
+                return true;
+            }
+
+            LogEntry<T> entry = new LogEntry<>(currentTerm, clientID, sequenceNum, command);
             log.add(entry);
             persist();
             return true;
@@ -501,15 +527,16 @@ public class Node<T> implements RaftMessageReceiver{
 
     public void updateCommitIndex() {
         List<Integer> indexes = new ArrayList<>();
-        indexes.add(log.size() - 1);
+        indexes.add((int) (lastIncludedIndex + log.size())); 
         indexes.addAll(matchIndex.values());
         indexes.sort(Integer::compareTo);
+        
         int commitThreshold = indexes.size() / 2;
         int N = indexes.get(commitThreshold);
 
-        if (N > commitIndex && N < log.size()) {
-            LogEntry<T> entry = log.get(N);
-            if (entry.term() == currentTerm) {
+        if (N > commitIndex && N <= (lastIncludedIndex + log.size())) {
+            LogEntry<T> entry = getEntry(N);
+            if (entry != null && entry.term() == currentTerm) {
                 commitIndex = N;
                 applyLog();
             }
@@ -518,10 +545,9 @@ public class Node<T> implements RaftMessageReceiver{
 
     
     private void applyLog() {
-        while (lastApplied <= commitIndex && lastApplied < log.size()) {
-            if (log.isEmpty()) break;
-            LogEntry<T> entry = log.get((int) lastApplied);
-            
+        while (lastApplied <= commitIndex) {
+            LogEntry<T> entry = getEntry(lastApplied);
+            if (entry == null) break;
             
             if (entry.command() instanceof String cmd) {
                 applyCommand(cmd);
@@ -647,16 +673,16 @@ public class Node<T> implements RaftMessageReceiver{
         return log.get(log.size() - 1).term();
     }
 
-    public InstallSnapshotResponse handleInstallSnapshot(InstallSnapshotRequest request){
+    public InstallSnapshotResponse handleInstallSnapshot(InstallSnapshotRequest request) {
         if (!running) throw new RuntimeException("Node is down");
         lock.lock();
 
-        try{
-            if (request.term() < currentTerm){
+        try {
+            if (request.term() < currentTerm) {
                 return new InstallSnapshotResponse(currentTerm);
             }
 
-            if (request.term() > currentTerm){
+            if (request.term() > currentTerm) {
                 currentTerm = request.term();
                 currentRole = Role.FOLLOWER;
                 votedFor = null;
@@ -666,39 +692,46 @@ public class Node<T> implements RaftMessageReceiver{
 
             resetElectionTimer();
 
-            if (request.lastIncludedIndex() <= lastIncludedIndex){
+            if (request.offset() == 0) {
+                snapshotBuffer.reset();
+            }
+
+            snapshotBuffer.write(request.data(), 0, request.data().length);
+
+            if (!request.done()) {
                 return new InstallSnapshotResponse(currentTerm);
             }
 
-            System.out.println("Node " + nodeID + " installing snapshot from Leader. LastIndex: " + request.lastIncludedIndex());
+            if (request.lastIncludedIndex() <= lastIncludedIndex) {
+                return new InstallSnapshotResponse(currentTerm);
+            }
+
+            System.out.println("Node " + nodeID + " installing full snapshot from Leader. LastIndex: " + request.lastIncludedIndex());
             
+            deserializeAndApplySnapshotState(snapshotBuffer.toByteArray());
+
             this.lastIncludedIndex = request.lastIncludedIndex();
             this.lastIncludedTerm = request.lastIncludedTerm();
 
-            this.stateMachine.clear();
-            this.stateMachine.putAll(request.data());
-
             int localCutIndex = getLocalIndex(request.lastIncludedIndex());
 
-            if (localCutIndex >= 0 && localCutIndex < log.size()){
-                List<LogEntry<T>> remaining = new ArrayList<>(log.subList(localCutIndex+1, log.size()));
+            if (localCutIndex >= 0 && localCutIndex < log.size()) {
+                List<LogEntry<T>> remaining = new ArrayList<>(log.subList(localCutIndex + 1, log.size()));
                 log.clear();
                 log.addAll(remaining);
-            }
-            else{
+            } else {
                 log.clear();
             }
 
-            this.lastApplied = request.lastIncludedIndex();
+            this.lastApplied = request.lastIncludedIndex() + 1;
             this.commitIndex = Math.max(commitIndex, request.lastIncludedIndex());
 
-            Snapshot newSnap = new Snapshot(lastIncludedIndex, lastIncludedTerm, new ConcurrentHashMap<>(stateMachine));
+            Snapshot newSnap = new Snapshot(lastIncludedIndex, lastIncludedTerm, new ConcurrentHashMap<>(stateMachine), new ConcurrentHashMap<>(clientSession));
             storage.saveSnapshot(newSnap);
             persist();
 
             return new InstallSnapshotResponse(currentTerm);
-        }
-        finally{
+        } finally {
             lock.unlock();
         }
     }
@@ -708,11 +741,10 @@ public class Node<T> implements RaftMessageReceiver{
             return CompletableFuture.completedFuture(false);
         }
 
-        AtomicInteger acks = new AtomicInteger(1);
+        AtomicInteger acks = new AtomicInteger(1); 
         int quorum = (peers.size() + 1) / 2 + 1;
         CompletableFuture<Boolean> result = new CompletableFuture<>();
 
-        // Inviamo un heartbeat rapido a tutti
         AppendEntriesRequest<T> heartbeat = new AppendEntriesRequest<>(
             currentTerm, nodeID, getLastLogIndex(), getLastLogTerm(), new ArrayList<>(), commitIndex
         );
@@ -721,9 +753,13 @@ public class Node<T> implements RaftMessageReceiver{
             vThreadExecutor.submit(() -> 
                 network.sendAppendEntries(peer, heartbeat)
                     .thenAccept(response -> {
-                        if (response != null && response.success()) {
-                            if (acks.incrementAndGet() >= quorum) {
-                                result.complete(true);
+                        if (response != null) {
+                            if (response.term() == currentTerm) {
+                                if (acks.incrementAndGet() >= quorum) {
+                                    result.complete(true);
+                                }
+                            } else if (response.term() > currentTerm) {
+                                result.complete(false);
                             }
                         }
                     })
@@ -733,7 +769,7 @@ public class Node<T> implements RaftMessageReceiver{
         
         vThreadExecutor.submit(() -> {
             try {
-                Thread.sleep(electionTimeout / 2); 
+                Thread.sleep(electionTimeout / 2);
                 if (!result.isDone()) {
                     result.complete(false);
                 }
@@ -741,6 +777,36 @@ public class Node<T> implements RaftMessageReceiver{
         });
 
         return result;
+    }
+
+    private byte[] serializeSnapshotState() {
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream();
+             ObjectOutputStream oos = new ObjectOutputStream(baos)) {
+            oos.writeObject(new ConcurrentHashMap<>(stateMachine));
+            oos.writeObject(new ConcurrentHashMap<>(clientSession));
+            return baos.toByteArray();
+        } catch (Exception e) {
+            throw new RuntimeException("Error serializing snapshot state", e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void deserializeAndApplySnapshotState(byte[] bytes) {
+        try (ByteArrayInputStream bais = new ByteArrayInputStream(bytes);
+             ObjectInputStream ois = new ObjectInputStream(bais)) {
+            
+            Map<String, String> parsedStateMachine = (Map<String, String>) ois.readObject();
+            Map<String, Long> parsedClientSession = (Map<String, Long>) ois.readObject();
+            
+            this.stateMachine.clear();
+            this.stateMachine.putAll(parsedStateMachine);
+            
+            this.clientSession.clear();
+            this.clientSession.putAll(parsedClientSession);
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Error deserializing snapshot state", e);
+        }
     }
 }
 

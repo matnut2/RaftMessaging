@@ -140,7 +140,7 @@ public class RaftIntegrationTest {
 
         
         System.out.println("--- Sending Command 'CMD_1' ---");
-        boolean accepted = leader.propose("CMD_1");
+        boolean accepted = leader.propose("ClientA", 1, "CMD_1");
         
         assertThat(accepted)
             .as("Leader should accept the proposal")
@@ -193,15 +193,8 @@ public class RaftIntegrationTest {
 
         
         System.out.println("--- Proposing Command 'SET_X=10' ---");
-        boolean accepted = leader.propose("SET_X=10");
+        boolean accepted = leader.propose("clientA", 1,"SET_X=10");
         assertThat(accepted).isTrue();
-
-        
-        
-        
-        
-        
-        
         
         Thread.sleep(2000);
 
@@ -255,12 +248,12 @@ public class RaftIntegrationTest {
         Node<String> follower = (leader == nodeA) ? nodeB : nodeA;
         
         
-        leader.propose("X=1");
+        leader.propose("Clienta", 1, "X=1");
         Thread.sleep(500); 
         
         
         assertThat(follower.getLogCopy()).hasSize(1);
-        leader.propose("Y=2");
+        leader.propose("ClientA", 2, "Y=2");
         Thread.sleep(500);
         assertThat(follower.getLogCopy()).hasSize(2);
         
@@ -293,7 +286,7 @@ public class RaftIntegrationTest {
         System.out.println("First Leader is: " + firstLeader.getNodeID());
 
         
-        firstLeader.propose("CRITICAL_DATA");
+        firstLeader.propose("ClientA", 1, "CRITICAL_DATA");
         Thread.sleep(2000); 
         
         assertThat(firstLeader.getCommitIndex()).isGreaterThanOrEqualTo(0);
@@ -321,7 +314,7 @@ public class RaftIntegrationTest {
         assertThat(newLeaderLog.get(0).command()).isEqualTo("CRITICAL_DATA");
 
         
-        newLeader.propose("NEW_ERA_DATA");
+        newLeader.propose("ClientB", 1, "NEW_ERA_DATA");
         Thread.sleep(2000);
 
         

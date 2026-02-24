@@ -68,7 +68,7 @@ public class RaftSnapshotTest {
 
         System.out.println("--- Writing Data (Victim is offline) ---");
         for (int i = 0; i < 10; i++) {
-            leader.propose("SET key" + i + "=value" + i);
+            leader.propose("ClientA", 1, "SET key" + i + "=value" + i);
             Thread.sleep(100); 
         }
 
