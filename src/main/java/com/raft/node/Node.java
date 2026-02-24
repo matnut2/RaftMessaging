@@ -25,6 +25,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 public class Node<T> implements RaftMessageReceiver{
     private final String nodeID;
@@ -60,13 +61,14 @@ public class Node<T> implements RaftMessageReceiver{
     private long lastIncludedTerm = 0;
 
     private volatile String currentLeaderID;
+    private volatile boolean isRemovedFromCluster = false;
 
     
     private final Map<String, String> stateMachine = new ConcurrentHashMap<>();
 
     public Node(String nodeID, List<String> peers, Network network) {
         this.nodeID = nodeID;
-        this.peers = peers;
+        this.peers = new CopyOnWriteArrayList<>(peers);
         this.network = network;
         this.lock = new ReentrantLock();
         this.random = new Random();
@@ -181,6 +183,7 @@ public class Node<T> implements RaftMessageReceiver{
     private void startElection() {
         lock.lock();
         try {
+            if (isRemovedFromCluster) return;
             if (currentRole == Role.LEADER) return;
 
             currentLeaderID = null;
@@ -461,6 +464,18 @@ private void sendSnapshotToPeer(String peerID) {
                 } else {
                     log.add(entry);
                 }
+
+                if (entry.command() instanceof String cmd) {
+                    if (cmd.startsWith("CONF_REMOVE_SERVER=")) {
+                        String target = cmd.substring(19).trim();
+                        if (target.equals(nodeID)) {
+                            System.out.println("NODE " + nodeID + " detected removal from incoming log. Disabling elections.");
+                            isRemovedFromCluster = true;
+                            currentRole = Role.FOLLOWER;
+                        }
+                    }
+                }
+                
                 indexToInsert++;
             }
 
@@ -569,7 +584,35 @@ private void sendSnapshotToPeer(String peerID) {
             } else if (command.startsWith("DEL ")) {
                 String key = command.substring(4).trim();
                 stateMachine.remove(key);
+                
+            } else if (command.startsWith("CONF_ADD_SERVER=")) {
+                String newPeer = command.substring(16).trim();
+                if (!peers.contains(newPeer) && !newPeer.equals(nodeID)) {
+                    peers.add(newPeer);
+                    System.out.println("🔧 NODE " + nodeID + " ADDED PEER: " + newPeer);
+                    
+                    if (currentRole == Role.LEADER) {
+                        nextIndex.putIfAbsent(newPeer, (int) (lastIncludedIndex + log.size() + 1));
+                        matchIndex.putIfAbsent(newPeer, -1);
+                    }
+                }
+            } else if (command.startsWith("CONF_REMOVE_SERVER=")) {
+                String oldPeer = command.substring(19).trim();
+                peers.remove(oldPeer);
+                System.out.println("🔧 NODE " + nodeID + " REMOVED PEER: " + oldPeer);
+                
+                if (currentRole == Role.LEADER) {
+                    nextIndex.remove(oldPeer);
+                    matchIndex.remove(oldPeer);
+                }
+                
+                if (oldPeer.equals(nodeID)) {
+                    System.out.println("NODE " + nodeID + " removed from cluster. Stepping down.");
+                    currentRole = Role.FOLLOWER;
+                    isRemovedFromCluster = true;
+                }
             }
+            
         } catch (Exception e) {
             System.err.println("Error applying command: " + command);
         }
@@ -808,5 +851,60 @@ private void sendSnapshotToPeer(String peerID) {
             throw new RuntimeException("Error deserializing snapshot state", e);
         }
     }
+
+    public boolean addServer(String newPeerID) {
+        lock.lock();
+        try {
+            if (currentRole != Role.LEADER) return false;
+            if (peers.contains(newPeerID)) return true;
+
+            // Restrizione Single-Server Change: controlla l'assenza di cambi configurazione pendenti
+            for (long i = commitIndex + 1; i <= lastIncludedIndex + log.size(); i++) {
+                LogEntry<T> entry = getEntry(i);
+                if (entry != null && entry.command() instanceof String cmd) {
+                    if (cmd.startsWith("CONF_")) {
+                        System.out.println("Cannot add server: another configuration change is pending.");
+                        return false; 
+                    }
+                }
+            }
+
+            @SuppressWarnings("unchecked")
+            T cmd = (T) ("CONF_ADD_SERVER=" + newPeerID);
+            return propose("SYSTEM_CONFIG", System.currentTimeMillis(), cmd);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public boolean removeServer(String peerID) {
+        lock.lock();
+        try {
+            if (currentRole != Role.LEADER) return false;
+            if (!peers.contains(peerID)) return true;
+
+            for (long i = commitIndex + 1; i <= lastIncludedIndex + log.size(); i++) {
+                LogEntry<T> entry = getEntry(i);
+                if (entry != null && entry.command() instanceof String cmd) {
+                    if (cmd.startsWith("CONF_")) {
+                        System.out.println("Cannot remove server: another configuration change is pending.");
+                        return false;
+                    }
+                }
+            }
+
+            @SuppressWarnings("unchecked")
+            T cmd = (T) ("CONF_REMOVE_SERVER=" + peerID);
+            return propose("SYSTEM_CONFIG", System.currentTimeMillis(), cmd);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public List<String> getPeers() {
+        lock.lock();
+        try { return new ArrayList<>(peers); } finally { lock.unlock(); }
+    }
 }
+
 
