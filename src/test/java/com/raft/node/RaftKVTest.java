@@ -38,7 +38,8 @@ public class RaftKVTest {
     }
 
     private void deleteNodeFiles(String nodeId) {
-        deleteFileWithRetry(new File("raft_node_" + nodeId + ".dat"));
+        deleteFileWithRetry(new File("raft_node_" + nodeId + ".meta"));
+        deleteFileWithRetry(new File("raft_node_" + nodeId + ".wal"));
         deleteFileWithRetry(new File("raft_node_" + nodeId + ".snapshot"));
     }
 

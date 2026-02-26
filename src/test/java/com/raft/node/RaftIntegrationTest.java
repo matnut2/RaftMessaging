@@ -30,20 +30,15 @@ public class RaftIntegrationTest {
     }
 
     private void deleteNodeFiles(String nodeId) {
-        try {
-            new File("raft_node_" + nodeId + ".dat").delete();
-            new File("raft_node_" + nodeId + ".snapshot").delete();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        new File("raft_node_" + nodeId + ".meta").delete();
+        new File("raft_node_" + nodeId + ".wal").delete();
+        new File("raft_node_" + nodeId + ".snapshot").delete();
     }
+    
     @Test
     void clusterShouldElectLeaderAndStabilize() throws InterruptedException {
         
         InMemoryNetwork network = new InMemoryNetwork(true);
-
-        
-        
         
         Node<String> nodeA = new Node<>("A", List.of("B", "C"), network);
         Node<String> nodeB = new Node<>("B", List.of("A", "C"), network);

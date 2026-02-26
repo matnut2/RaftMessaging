@@ -33,7 +33,8 @@ public class RaftSnapshotTest {
     }
 
     private void deleteNodeFiles(String nodeId) {
-        new File("raft_node_" + nodeId + ".dat").delete();
+        new File("raft_node_" + nodeId + ".meta").delete();
+        new File("raft_node_" + nodeId + ".wal").delete();
         new File("raft_node_" + nodeId + ".snapshot").delete();
     }
 

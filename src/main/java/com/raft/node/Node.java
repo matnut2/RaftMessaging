@@ -6,6 +6,7 @@ import com.raft.core.Snapshot;
 import com.raft.core.Network;
 import com.raft.rpc.*;
 import com.raft.core.Storage;
+import com.raft.core.WalStorage;
 import com.raft.core.FileStorage;
 import com.raft.core.PersistentState;
 import com.raft.core.RaftMessageReceiver;
@@ -74,7 +75,7 @@ public class Node<T> implements RaftMessageReceiver{
         this.lock = new ReentrantLock();
         this.random = new Random();
 
-        this.storage = new FileStorage<T>(nodeID);
+        this.storage = new WalStorage<T>(nodeID, String.class);
         
         Snapshot snap = storage.loadSnapshot();
         
@@ -192,7 +193,6 @@ public class Node<T> implements RaftMessageReceiver{
             preVotesReceived = 1; 
             resetElectionTimer(); 
 
-            // CONTROLLO IMMEDIATO DEL QUORUM PER CLUSTER A NODO SINGOLO
             int quorum = (peers.size() + 1) / 2 + 1;
             if (preVotesReceived >= quorum) {
                 preVotesReceived = 0;
@@ -222,13 +222,10 @@ public class Node<T> implements RaftMessageReceiver{
         if (!running) throw new RuntimeException("Node is down");
         lock.lock();
         try {
-            // Se il candidato ha un termine più vecchio, rifiuta
             if (request.nextTerm() <= currentTerm) {
                 return new PreVoteResponse(currentTerm, false);
             }
 
-            // Un Pre-Vote non forza l'aggiornamento del currentTerm o del Role del ricevente
-            // Si valuta esclusivamente l'aggiornamento del log
             boolean logIsUpToDate = false;
             long myLastLogIndex = getLastLogIndex();
             long myLastLogTerm = getLastLogTerm();
@@ -252,7 +249,6 @@ public class Node<T> implements RaftMessageReceiver{
         try {
             if (currentRole == Role.LEADER) return;
 
-            // Se scopriamo che il cluster è già a un termine superiore, ci aggiorniamo
             if (response.term() > currentTerm) {
                 currentRole = Role.FOLLOWER;
                 currentTerm = response.term();
@@ -264,9 +260,8 @@ public class Node<T> implements RaftMessageReceiver{
             if (response.voteGranted()) {
                 preVotesReceived++;
                 int quorum = (peers.size() + 1) / 2 + 1;
-                // Se otteniamo la maggioranza ai Pre-Vote, avviamo l'elezione reale
                 if (preVotesReceived >= quorum) {
-                    preVotesReceived = 0; // Reset di sicurezza
+                    preVotesReceived = 0; 
                     startElection();
                 }
             }
