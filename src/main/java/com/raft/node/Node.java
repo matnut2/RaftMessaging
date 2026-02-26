@@ -46,6 +46,7 @@ public class Node<T> implements RaftMessageReceiver{
     private final ByteArrayOutputStream snapshotBuffer = new ByteArrayOutputStream();
 
     private long currentTerm;
+    private int preVotesReceived;
     private String votedFor;
     private final List<LogEntry<T>> log;
 
@@ -175,8 +176,102 @@ public class Node<T> implements RaftMessageReceiver{
 
             long elapsed = System.currentTimeMillis() - lastElectionResetTime.get();
             if (elapsed >= electionTimeout) {
-                startElection();
+                startPreVote();
             }
+        }
+    }
+
+    private void startPreVote() {
+        lock.lock();
+        try {
+            if (isRemovedFromCluster) return;
+            if (currentRole == Role.LEADER) return;
+
+            System.out.println("Node " + nodeID + " timeout. Starting Pre-Vote for term " + (currentTerm + 1));
+            
+            preVotesReceived = 1; 
+            resetElectionTimer(); 
+
+            // CONTROLLO IMMEDIATO DEL QUORUM PER CLUSTER A NODO SINGOLO
+            int quorum = (peers.size() + 1) / 2 + 1;
+            if (preVotesReceived >= quorum) {
+                preVotesReceived = 0;
+                startElection();
+                return;
+            }
+            
+            long nextTerm = currentTerm + 1;
+            long lastLogIdx = getLastLogIndex(); 
+            long lastLogTerm = getLastLogTerm();
+
+            PreVoteRequest request = new PreVoteRequest(nextTerm, nodeID, lastLogIdx, lastLogTerm);
+
+            for (String peerID : peers) {
+                vThreadExecutor.submit(() -> 
+                    network.sendPreVote(peerID, request)
+                        .thenAccept(this::handlePreVoteResponse)
+                        .exceptionally(ex -> null) 
+                );
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public PreVoteResponse handlePreVote(PreVoteRequest request) {
+        if (!running) throw new RuntimeException("Node is down");
+        lock.lock();
+        try {
+            // Se il candidato ha un termine più vecchio, rifiuta
+            if (request.nextTerm() <= currentTerm) {
+                return new PreVoteResponse(currentTerm, false);
+            }
+
+            // Un Pre-Vote non forza l'aggiornamento del currentTerm o del Role del ricevente
+            // Si valuta esclusivamente l'aggiornamento del log
+            boolean logIsUpToDate = false;
+            long myLastLogIndex = getLastLogIndex();
+            long myLastLogTerm = getLastLogTerm();
+
+            if (request.lastLogTerm() > myLastLogTerm) {
+                logIsUpToDate = true;
+            } else if (request.lastLogTerm() == myLastLogTerm && request.lastLogIndex() >= myLastLogIndex) {
+                logIsUpToDate = true;
+            }
+
+            return new PreVoteResponse(currentTerm, logIsUpToDate);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void handlePreVoteResponse(PreVoteResponse response) {
+        if (response == null) return; 
+
+        lock.lock();
+        try {
+            if (currentRole == Role.LEADER) return;
+
+            // Se scopriamo che il cluster è già a un termine superiore, ci aggiorniamo
+            if (response.term() > currentTerm) {
+                currentRole = Role.FOLLOWER;
+                currentTerm = response.term();
+                votedFor = null;
+                persist();
+                return;
+            }
+
+            if (response.voteGranted()) {
+                preVotesReceived++;
+                int quorum = (peers.size() + 1) / 2 + 1;
+                // Se otteniamo la maggioranza ai Pre-Vote, avviamo l'elezione reale
+                if (preVotesReceived >= quorum) {
+                    preVotesReceived = 0; // Reset di sicurezza
+                    startElection();
+                }
+            }
+        } finally {
+            lock.unlock();
         }
     }
 

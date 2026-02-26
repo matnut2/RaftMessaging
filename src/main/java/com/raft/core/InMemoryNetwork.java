@@ -5,6 +5,8 @@ import com.raft.rpc.AppendEntriesRequest;
 import com.raft.rpc.AppendEntriesResponse;
 import com.raft.rpc.InstallSnapshotRequest;
 import com.raft.rpc.InstallSnapshotResponse;
+import com.raft.rpc.PreVoteRequest;
+import com.raft.rpc.PreVoteResponse;
 import com.raft.rpc.RequestVoteRequest;
 import com.raft.rpc.RequestVoteResponse;
 import java.util.Map;
@@ -112,7 +114,27 @@ public class InMemoryNetwork implements Network {
             catch (Exception e) {
                 return CompletableFuture.failedFuture(e);
         }
-    }   
+    }
+    
+    @Override
+    public CompletableFuture<PreVoteResponse> sendPreVote(String targetNodeId, PreVoteRequest request) {
+        try {
+            if (simulateLatency) simulateNetworkDelay();
+        
+            Node<?> target = nodes.get(targetNodeId);
+            if (target == null) {
+                return CompletableFuture.failedFuture(new RuntimeException("Node unreachable"));
+            }
+        
+            @SuppressWarnings("unchecked")
+            Node<Object> typedTarget = (Node<Object>) target;
+            
+            PreVoteResponse response = typedTarget.handlePreVote(request);
+            return CompletableFuture.completedFuture(response);
+        } catch (Exception e) {
+            return CompletableFuture.failedFuture(e);
+        }
+    }
 
     private void simulateNetworkDelay() {
         try {

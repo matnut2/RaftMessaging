@@ -36,6 +36,11 @@ public class NodeTest {
         public CompletableFuture<String> sendClientGet(String targetNodeID, String key) {
             return CompletableFuture.completedFuture(null);
         }
+
+        @Override
+        public CompletableFuture<PreVoteResponse> sendPreVote(String targetNodeID, PreVoteRequest r){
+            return CompletableFuture.completedFuture(new PreVoteResponse(0, false));
+        }
     };
 
     @BeforeEach

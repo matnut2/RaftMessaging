@@ -6,6 +6,8 @@ import com.raft.rpc.InstallSnapshotRequest;
 import com.raft.rpc.InstallSnapshotResponse;
 import com.raft.rpc.RequestVoteRequest;
 import com.raft.rpc.RequestVoteResponse;
+import com.raft.rpc.PreVoteRequest;
+import com.raft.rpc.PreVoteResponse;
 
 import java.util.concurrent.CompletableFuture;
 
@@ -30,4 +32,6 @@ public interface Network {
     CompletableFuture<InstallSnapshotResponse> sendInstallSnapshot(String targetNodeID, InstallSnapshotRequest request);
 
     CompletableFuture<String> sendClientGet(String targetNodeId, String key);
+
+    CompletableFuture<PreVoteResponse> sendPreVote(String targetNodeID, PreVoteRequest request);
 } 
