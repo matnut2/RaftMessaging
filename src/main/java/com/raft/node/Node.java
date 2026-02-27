@@ -39,9 +39,9 @@ public class Node<T> implements RaftMessageReceiver{
     private final Storage<T> storage;
 
     private final AtomicLong lastElectionResetTime;
-    private final int MIN_TIMEOUT_MS = 150;
-    private final int MAX_TIMEOUT_MS = 300;
-    private final int heartbeatInterval = 50;
+    private final int MIN_TIMEOUT_MS = 1500;
+    private final int MAX_TIMEOUT_MS = 3000;
+    private final int heartbeatInterval = 500;
     private final Map<String, Long> clientSession = new ConcurrentHashMap<>();
     private final int electionTimeout;
     private final ByteArrayOutputStream snapshotBuffer = new ByteArrayOutputStream();

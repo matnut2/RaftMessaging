@@ -1,0 +1,35 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "java",
+            "name": "Node A",
+            "request": "launch",
+            "mainClass": "com.raft.main",
+            "projectName": "raft-consensus",
+            "args": ["A"]
+        },
+        {
+            "type": "java",
+            "name": "Node B",
+            "request": "launch",
+            "mainClass": "com.raft.main",
+            "projectName": "raft-consensus",
+            "args": ["B"]
+        },
+        {
+            "type": "java",
+            "name": "Node C",
+            "request": "launch",
+            "mainClass": "com.raft.main",
+            "projectName": "raft-consensus",
+            "args": ["C"]
+        }
+    ],
+    "compounds": [
+        {
+            "name": "Run Cluster (A, B, C)",
+            "configurations": ["Node A", "Node B", "Node C"]
+        }
+    ]
+}
