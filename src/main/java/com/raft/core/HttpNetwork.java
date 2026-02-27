@@ -38,7 +38,7 @@ public class HttpNetwork implements Network{
             server.createContext("/requestVote", this::handleRequestVoteHttp);
             server.createContext("/appendEntries", this::handleAppendEntriesHttp);
             server.createContext("/installSnapshot", this::handleInstallSnapshotHttp);
-            server.createContext("/preVwote", this::handlePreVoteHttp);
+            server.createContext("/preVote", this::handlePreVoteHttp);
 
             server.createContext("/clientGet", this::handleClientGetHttp);
             server.createContext("/clientPropose", this::handleClientProposeHttp);
