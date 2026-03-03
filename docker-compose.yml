@@ -8,8 +8,6 @@ services:
     command: ["-Dexec.args=A"]
     ports:
       - "8081:8081"
-    volumes:
-      - raft-data-a:/app
 
   node-b:
     image: raft-node-base
@@ -17,8 +15,6 @@ services:
     command: ["-Dexec.args=B"]
     ports:
       - "8082:8082"
-    volumes:
-      - raft-data-b:/app
 
   node-c:
     image: raft-node-base
@@ -26,10 +22,3 @@ services:
     command: ["-Dexec.args=C"]
     ports:
       - "8083:8083"
-    volumes:
-      - raft-data-c:/app
-
-volumes:
-  raft-data-a:
-  raft-data-b:
-  raft-data-c:
