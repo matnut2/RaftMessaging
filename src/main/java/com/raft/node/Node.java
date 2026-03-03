@@ -7,6 +7,7 @@ import com.raft.core.Network;
 import com.raft.rpc.*;
 import com.raft.core.Storage;
 import com.raft.core.WalStorage;
+import com.google.gson.Gson;
 import com.raft.core.FileStorage;
 import com.raft.core.PersistentState;
 import com.raft.core.RaftMessageReceiver;
@@ -754,9 +755,9 @@ private void sendSnapshotToPeer(String peerID) {
 
         List<String> messages = stateMachine.get(room);
         if (messages == null || messages.isEmpty()) {
-            return "Nessun messaggio nella stanza [" + room + "]";
+            return "[]";
         }
-        return String.join("\n", messages);
+        return new Gson().toJson(messages);
     }
     
     public void resetElectionTimer() {

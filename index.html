@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Raft Distributed Chat</title>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f4f4f9; display: flex; justify-content: center; padding: 20px; }
+        .chat-container { width: 100%; max-width: 600px; background: white; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); overflow: hidden; display: flex; flex-direction: column; height: 80vh; }
+        .header { background: #007bff; color: white; padding: 15px; text-align: center; font-weight: bold; }
+        .controls { padding: 10px; background: #e9ecef; display: flex; gap: 10px; border-bottom: 1px solid #ddd; }
+        .controls input { flex: 1; padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+        .chat-box { flex: 1; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; background: #fafafa; }
+        .message { background: #e1f5fe; padding: 10px; border-radius: 8px; border-left: 4px solid #03a9f4; align-self: flex-start; max-width: 80%; word-wrap: break-word; }
+        .input-area { display: flex; padding: 15px; background: white; border-top: 1px solid #ddd; gap: 10px; }
+        .input-area input { flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 4px; }
+        .input-area button { padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .input-area button:hover { background: #218838; }
+        .status { font-size: 0.8em; color: #666; text-align: center; padding: 5px; background: #eee; }
+    </style>
+</head>
+<body>
+
+<div class="chat-container">
+    <div class="header">Raft Distributed Chat</div>
+    
+    <div class="controls">
+        <label for="roomInput">Stanza:</label>
+        <input type="text" id="roomInput" value="chat_generale">
+        <label for="nodeInput">Nodo Gateway:</label>
+        <select id="nodeInput">
+            <option value="http://127.0.0.1:8081">Nodo A (8081)</option>
+            <option value="http://127.0.0.1:8082">Nodo B (8082)</option>
+            <option value="http://127.0.0.1:8083">Nodo C (8083)</option>
+        </select>
+    </div>
+
+    <div class="chat-box" id="chatBox">
+        </div>
+
+    <div class="status" id="statusArea">In attesa di connessione...</div>
+
+    <div class="input-area">
+        <input type="text" id="messageInput" placeholder="Scrivi un messaggio..." onkeypress="handleKeyPress(event)">
+        <button onclick="sendMessage()">Invia</button>
+    </div>
+</div>
+
+<script>
+    const chatBox = document.getElementById('chatBox');
+    const roomInput = document.getElementById('roomInput');
+    const nodeInput = document.getElementById('nodeInput');
+    const messageInput = document.getElementById('messageInput');
+    const statusArea = document.getElementById('statusArea');
+
+    // Polling periodico per leggere i messaggi
+    async function fetchMessages() {
+        const room = roomInput.value.trim() || 'chat_generale';
+        const baseUrl = nodeInput.value;
+
+        try {
+            const response = await fetch(`${baseUrl}/clientGet?key=${room}`);
+            if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
+            
+            const messages = await response.json();
+            renderMessages(messages);
+            statusArea.innerText = `Ultimo aggiornamento: ${new Date().toLocaleTimeString()} (via ${baseUrl})`;
+            statusArea.style.color = "green";
+        } catch (error) {
+            statusArea.innerText = `Errore di connessione: ${error.message}`;
+            statusArea.style.color = "red";
+        }
+    }
+
+    // Rendering dei messaggi nella UI
+    function renderMessages(messages) {
+        chatBox.innerHTML = '';
+        if (messages.length === 0) {
+            chatBox.innerHTML = '<div style="color: #999; text-align: center; margin-top: 20px;">Nessun messaggio in questa stanza.</div>';
+            return;
+        }
+
+        messages.forEach(msg => {
+            const div = document.createElement('div');
+            div.className = 'message';
+            div.innerText = msg;
+            chatBox.appendChild(div);
+        });
+
+        chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    // Invio di un nuovo messaggio
+    async function sendMessage() {
+        const room = roomInput.value.trim() || 'chat_generale';
+        const message = messageInput.value.trim();
+        const baseUrl = nodeInput.value;
+
+        if (!message) return;
+
+        const payload = `SEND ${room} ${message}`;
+        messageInput.value = ''; // Pulisce l'input
+
+        try {
+            // L'API fetch del browser segue automaticamente il redirect 307
+            const response = await fetch(`${baseUrl}/clientPropose`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain' },
+                body: payload
+            });
+
+            if (response.ok) {
+                fetchMessages(); // Aggiorna subito la chat
+            } else {
+                throw new Error(`Impossibile inviare. Status: ${response.status}`);
+            }
+        } catch (error) {
+            alert(`Errore durante l'invio: ${error.message}`);
+        }
+    }
+
+    function handleKeyPress(event) {
+        if (event.key === 'Enter') {
+            sendMessage();
+        }
+    }
+
+    // Avvia il polling ogni 1000 millisecondi (1 secondo)
+    setInterval(fetchMessages, 1000);
+    fetchMessages(); // Prima chiamata immediata
+</script>
+
+</body>
+</html>

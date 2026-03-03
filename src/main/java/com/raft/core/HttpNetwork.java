@@ -119,6 +119,11 @@ public class HttpNetwork implements Network{
     }
 
     private void handleClientGetHttp(HttpExchange exchange) throws IOException {
+        setCorsHeaders(exchange);
+        if ("OPTIONS".equals(exchange.getRequestMethod())) {
+            exchange.sendResponseHeaders(204, -1);
+            return;
+        }
         if (!"GET".equals(exchange.getRequestMethod())) {
             exchange.sendResponseHeaders(405, -1);
             return;
@@ -130,14 +135,19 @@ public class HttpNetwork implements Network{
         try {
             com.raft.node.Node<?> castedNode = (com.raft.node.Node<?>) localNode;
             String result = castedNode.get(key);
-            String response = result != null ? result : "null";
-            sendTextResponse(exchange, 200, response);
+            String response = result != null ? result : "[]";
+            sendJsonResponse(exchange, 200, response);
         } catch (Exception e) {
-            sendTextResponse(exchange, 500, e.getMessage());
+            sendJsonResponse(exchange, 500, "{\"error\": \"" + e.getMessage() + "\"}");
         }
     }
 
     private void handleClientProposeHttp(HttpExchange exchange) throws IOException {
+        setCorsHeaders(exchange);
+        if ("OPTIONS".equals(exchange.getRequestMethod())) {
+            exchange.sendResponseHeaders(204, -1);
+            return;
+        }
         if (!"POST".equals(exchange.getRequestMethod())) {
             exchange.sendResponseHeaders(405, -1);
             return;
@@ -151,14 +161,12 @@ public class HttpNetwork implements Network{
             }
             
             com.raft.node.Node<String> castedNode = (com.raft.node.Node<String>) localNode;
-            
             boolean success = castedNode.propose("HTTPClient", System.currentTimeMillis(), body.toString());
             
             if (success) {
-                sendTextResponse(exchange, 200, "Proposta accettata dal Leader");
+                sendJsonResponse(exchange, 200, "{\"status\": \"Proposta accettata dal Leader\"}");
             } else {
                 String leaderId = castedNode.getCurrentLeaderID();
-                
                 if (leaderId != null) {
                     String leaderUrl = peerAddresses.get(leaderId);
                     if (leaderUrl != null) {
@@ -168,10 +176,10 @@ public class HttpNetwork implements Network{
                         return;
                     }
                 }
-                sendTextResponse(exchange, 503, "Nodo non Leader e Leader attualmente sconosciuto");
+                sendJsonResponse(exchange, 503, "{\"error\": \"Nodo non Leader e Leader attualmente sconosciuto\"}");
             }
         } catch (Exception e) {
-            sendTextResponse(exchange, 500, e.getMessage());
+            sendJsonResponse(exchange, 500, "{\"error\": \"" + e.getMessage() + "\"}");
         }
     }
 
@@ -207,5 +215,19 @@ public class HttpNetwork implements Network{
         }
     }
 
+    private void setCorsHeaders(HttpExchange exchange) {
+        exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+        exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
+    }
+
+    private void sendJsonResponse(HttpExchange exchange, int statusCode, String json) throws IOException {
+        byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "application/json");
+        exchange.sendResponseHeaders(statusCode, bytes.length);
+        try (OutputStream os = exchange.getResponseBody()) {
+            os.write(bytes);
+        }
+    }
     
 }
