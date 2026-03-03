@@ -3,11 +3,20 @@
     "configurations": [
         {
             "type": "java",
+            "name": "RaftBenchmark",
+            "request": "launch",
+            "mainClass": "com.raft.node.RaftBenchmark",
+            "projectName": "raft-consensus"
+        },
+        {
+            "type": "java",
             "name": "Node A",
             "request": "launch",
             "mainClass": "com.raft.main",
             "projectName": "raft-consensus",
-            "args": ["A"]
+            "args": [
+                "A"
+            ]
         },
         {
             "type": "java",
@@ -15,7 +24,9 @@
             "request": "launch",
             "mainClass": "com.raft.main",
             "projectName": "raft-consensus",
-            "args": ["B"]
+            "args": [
+                "B"
+            ]
         },
         {
             "type": "java",
@@ -23,7 +34,9 @@
             "request": "launch",
             "mainClass": "com.raft.main",
             "projectName": "raft-consensus",
-            "args": ["C"]
+            "args": [
+                "C"
+            ]
         }
     ],
     "compounds": [

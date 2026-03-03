@@ -25,54 +25,42 @@ public class WalStorage<T> implements Storage<T> {
         this.logEntryType = TypeToken.getParameterized(LogEntry.class, commandType).getType();
     }
 
-    /**
-     * Persists the Raft node's metadata and log entries to the file system.
-     * <p>This implementation handles two distinct storage tasks:
-     * <ol>
-     * <li><b>Metadata:</b> Overwrites the metadata file with the current term and vote.</li>
-     * <li><b>Log (WAL):</b> Implements an optimized Write-Ahead Log strategy. If the new log
-     * is an extension of the existing one, it appends only the new entries. If the log 
-     * has been truncated or modified (e.g., due to a leader override), it rewrites the 
-     * entire log file to maintain consistency.</li>
-     * </ol>
-     * The {@code persistedLogSize} is updated to track the current state of the physical file.</p>
-     *
-     * @param currentTerm The current election term to persist.
-     * @param votedFor    The candidate ID granted a vote in this term, or {@code null}.
-     * @param log         The full list of log entries to be synchronized with storage.
-     * @throws RuntimeException if an I/O error occurs during file operations.
-     */
     @Override
-    public synchronized void save(long currentTerm, String votedFor, List<LogEntry<T>> log) {
-        try (FileWriter writer = new FileWriter(metaFile)) {
-            MetaData meta = new MetaData(currentTerm, votedFor);
-            gson.toJson(meta, writer);
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to save metadata", e);
-        }
-
-        try {
-            if (log.size() >= persistedLogSize) {
-                try (BufferedWriter writer = new BufferedWriter(new FileWriter(walFile, true))) {
-                    for (int i = persistedLogSize; i < log.size(); i++) {
-                        writer.write(gson.toJson(log.get(i), logEntryType));
-                        writer.newLine();
-                    }
-                }
-            } else {
-                try (BufferedWriter writer = new BufferedWriter(new FileWriter(walFile, false))) {
-                    for (LogEntry<T> entry : log) {
-                        writer.write(gson.toJson(entry, logEntryType));
-                        writer.newLine();
-                    }
-                }
-            }
-            persistedLogSize = log.size();
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to write to WAL", e);
-        }
+public synchronized void save(long currentTerm, String votedFor, List<LogEntry<T>> log) {
+    // 1. Salvataggio dei metadati (sovrascrittura)
+    try (FileWriter writer = new FileWriter(metaFile)) {
+        MetaData meta = new MetaData(currentTerm, votedFor);
+        gson.toJson(meta, writer);
+    } catch (IOException e) {
+        throw new RuntimeException("Failed to save metadata", e);
     }
 
+    // 2. Scrittura ottimizzata del WAL (Write-Ahead Log)
+    try {
+        if (log.size() > persistedLogSize) {
+            // Aggiunge solo le nuove entry usando un buffer da 32KB
+            try (BufferedWriter writer = new BufferedWriter(new FileWriter(walFile, true), 32768)) {
+                for (int i = persistedLogSize; i < log.size(); i++) {
+                    writer.write(gson.toJson(log.get(i), logEntryType));
+                    writer.newLine();
+                }
+                writer.flush();
+            }
+        } else if (log.size() < persistedLogSize) {
+            // Riscrive interamente il log in caso di troncamento (es. cambio leader)
+            try (BufferedWriter writer = new BufferedWriter(new FileWriter(walFile, false), 32768)) {
+                for (LogEntry<T> entry : log) {
+                    writer.write(gson.toJson(entry, logEntryType));
+                    writer.newLine();
+                }
+                writer.flush();
+            }
+        }
+        persistedLogSize = log.size();
+    } catch (IOException e) {
+        throw new RuntimeException("Failed to write to WAL", e);
+    }
+}
     /**
      * Loads the Raft node's persistent state from the file system during initialization.
      * <p>This method reconstructs the node's stable state by performing two sequential operations:

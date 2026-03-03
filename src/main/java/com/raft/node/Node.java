@@ -29,7 +29,18 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+
 public class Node<T> implements RaftMessageReceiver{
+
+    // Metrics
+    private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    private final Timer commitTimer = Timer.builder("raft.commit.latency").register(registry);
+    private final Counter proposalCounter = registry.counter("raft.proposals.total");   
+
+
     private final String nodeID;
     private final List<String> peers;
     private final Network network;
@@ -40,9 +51,9 @@ public class Node<T> implements RaftMessageReceiver{
     private final Storage<T> storage;
 
     private final AtomicLong lastElectionResetTime;
-    private final int MIN_TIMEOUT_MS = 150;
-    private final int MAX_TIMEOUT_MS = 300;
-    private final int heartbeatInterval = 50;
+    private final int MIN_TIMEOUT_MS = 600;
+    private final int MAX_TIMEOUT_MS = 1200;
+    private final int heartbeatInterval = 150;
     private final Map<String, Long> clientSession = new ConcurrentHashMap<>();
     private int electionTimeout;
     private final ByteArrayOutputStream snapshotBuffer = new ByteArrayOutputStream();
@@ -1017,50 +1028,44 @@ public class Node<T> implements RaftMessageReceiver{
         }
     }
 
-    /**
-     * Proposes a new command to the Raft cluster for replication and commitment.
-     * <p>This method acts as the primary entry point for client requests. It implements 
-     * linearizable semantics by filtering out duplicate requests and ensuring that 
-     * only the current cluster leader can append new entries to the log. If the node 
-     * is the leader, it wraps the command in a {@link LogEntry}, appends it to its 
-     * local log, and persists the change to stable storage before initiating 
-     * background replication to followers.</p>
-     *
-     * <p><b>Idempotency and Safety:</b>
-     * <ul>
-     * <li><b>Leader Check:</b> Returns {@code false} immediately if the node is not 
-     * the leader, allowing the client to redirect the request to the correct node.</li>
-     * <li><b>Duplicate Detection:</b> Uses {@code clientSession} to track the highest 
-     * processed sequence number per client. This prevents the same command from 
-     * being executed multiple times due to network retries.</li>
-     * <li><b>Stability:</b> The new log entry is written to disk via {@code persist()} 
-     * before the method returns, ensuring the entry survives a potential crash.</li>
-     * </ul>
-     * </p>
-     *
-     * @param clientID    The unique identifier of the client making the request.
-     * @param sequenceNum A monotonically increasing sequence number for idempotency.
-     * @param command     The state machine command to be executed.
-     * @return {@code true} if the command was accepted and appended to the log; 
-     * {@code false} if the node is not the leader.
-     */
     public boolean propose(String clientID, long sequenceNum, T command) {
-        lock.lock();
-        try {
-            if (currentRole != Role.LEADER) return false;
+    long indexAwaiting;
+    
+    lock.lock();
+    try {
+        if (currentRole != Role.LEADER) return false;
 
-            if (clientSession.getOrDefault(clientID, -1L) >= sequenceNum){
-                return true;
-            }
-
-            LogEntry<T> entry = new LogEntry<>(currentTerm, clientID, sequenceNum, command);
-            log.add(entry);
-            persist();
+        if (clientSession.getOrDefault(clientID, -1L) >= sequenceNum){
             return true;
-        } finally {
-            lock.unlock();
+        }
+
+        LogEntry<T> entry = new LogEntry<>(currentTerm, clientID, sequenceNum, command);
+        log.add(entry);
+        indexAwaiting = lastIncludedIndex + log.size();
+        persist();
+    } finally {
+        lock.unlock(); // Rilascia il lock prima di attendere la rete
+    }
+    
+    // Attende la conferma della maggioranza
+    return waitForCommit(indexAwaiting);
+}
+
+private boolean waitForCommit(long index) {
+    long start = System.currentTimeMillis();
+    while (System.currentTimeMillis() - start < 2000) { 
+        if (getCommitIndex() >= index) {
+            return true;
+        }
+        try { 
+            Thread.sleep(10); 
+        } catch (InterruptedException e) { 
+            Thread.currentThread().interrupt();
+            break; 
         }
     }
+    return false;
+}
 
     /**
      * Updates the leader's commit index by identifying the highest log entry replicated on a majority of nodes.
@@ -1996,6 +2001,11 @@ public class Node<T> implements RaftMessageReceiver{
             lock.unlock(); 
         }
     }
+
+    public void printPerformanceStats() {
+        System.out.println("=== Performance Report for Node " + nodeID + " ===");
+        System.out.println("Proposals: " + proposalCounter.count());
+        System.out.println("Avg Latency: " + commitTimer.mean(java.util.concurrent.TimeUnit.MILLISECONDS) + " ms");
+        System.out.println("Max Latency: " + commitTimer.max(java.util.concurrent.TimeUnit.MILLISECONDS) + " ms");
+    }
 }
-
-
