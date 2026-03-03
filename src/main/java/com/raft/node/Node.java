@@ -760,8 +760,10 @@ private void sendSnapshotToPeer(String peerID) {
     }
     
     public void resetElectionTimer() {
+        this.electionTimeout = MIN_TIMEOUT_MS + random.nextInt(MAX_TIMEOUT_MS - MIN_TIMEOUT_MS);
         this.lastElectionResetTime.set(System.currentTimeMillis());
     }
+    
     public Role getRole() {
         lock.lock();
         try { return currentRole; } finally { lock.unlock(); }
