@@ -414,8 +414,6 @@ public class Node<T> implements RaftMessageReceiver{
      * The election continues until the node wins the election, another node establishes 
      * leadership, or the election timeout elapses without a winner.</p>
      *
-     * 
-     *
      * <p><b>Lifecycle Actions:</b>
      * <ul>
      * <li>Transitions {@code currentRole} to {@link Role#CANDIDATE}.</li>
@@ -475,8 +473,6 @@ public class Node<T> implements RaftMessageReceiver{
      * are dispatched to all followers at a regular interval. These heartbeats are crucial 
      * for preventing followers from timing out and initiating unnecessary new elections.</p>
      *
-     * 
-     *
      * <p><b>Loop Characteristics:</b>
      * <ul>
      * <li><b>Timing Precision:</b> Calculates execution time ({@code elapsed}) to subtract 
@@ -524,7 +520,6 @@ public class Node<T> implements RaftMessageReceiver{
      * by a snapshot, meaning the leader no longer possesses the specific log entries 
      * needed to bring the follower up to speed via standard replication.</li>
      * </ul>
-     * * 
      *
      * @see #sendAppendEntriesToPeer(String, int)
      * @see #sendSnapshotToPeer(String)
@@ -557,8 +552,6 @@ public class Node<T> implements RaftMessageReceiver{
      * snapshot size, the data is typically handled in chunks to avoid network 
      * congestion and RPC timeout issues.</p>
      *
-     * 
-     *
      * @param peerID The unique identifier of the follower requiring the snapshot.
      * @see #serializeSnapshotState()
      * @see #sendSnapshotChunk(String, byte[], int)
@@ -574,7 +567,6 @@ public class Node<T> implements RaftMessageReceiver{
      * Since snapshots can be significantly larger than a single network packet, they are 
      * split into segments (default 4KB). This approach ensures reliable delivery, 
      * prevents memory exhaustion, and avoids blocking the RPC channel for long periods.</p>
-     * * 
      *
      * <p><b>Execution Flow:</b>
      * <ol>
@@ -637,7 +629,6 @@ public class Node<T> implements RaftMessageReceiver{
      * </ul>
      * </p>
      * 
-     *
      * @param peerID   The identifier of the follower that sent the response.
      * @param response The {@link InstallSnapshotResponse} containing the follower's 
      * current term and acknowledgment.
@@ -672,7 +663,6 @@ public class Node<T> implements RaftMessageReceiver{
      * the leader's latest entry. If no new entries are available, the request acts as a simple heartbeat 
      * to maintain leadership.</p>
      * 
-     *
      * <p><b>Implementation Details:</b>
      * <ul>
      * <li><b>Log Indexing:</b> Uses {@link #getTermForIndex} and {@link #getLocalIndex} to translate 
@@ -1036,8 +1026,6 @@ public class Node<T> implements RaftMessageReceiver{
      * local log, and persists the change to stable storage before initiating 
      * background replication to followers.</p>
      *
-     * 
-     *
      * <p><b>Idempotency and Safety:</b>
      * <ul>
      * <li><b>Leader Check:</b> Returns {@code false} immediately if the node is not 
@@ -1126,7 +1114,6 @@ public class Node<T> implements RaftMessageReceiver{
      * Raft node guarantees that the state machine remains consistent with the rest 
      * of the cluster. Once a command is applied, the {@code lastApplied} index is 
      * incremented to reflect the node's progress.</p>
-     * * 
      *
      * <p><b>Execution Process:</b>
      * <ul>
@@ -1242,7 +1229,6 @@ public class Node<T> implements RaftMessageReceiver{
      * <li><b>State Retrieval:</b> Reads the data directly from the state machine.</li>
      * </ol>
      * 
-     *
      * @param room The identifier of the message room to query.
      * @return A JSON-serialized list of messages in the room.
      * @throws RuntimeException If leadership cannot be confirmed, no leader is 
@@ -1294,7 +1280,6 @@ public class Node<T> implements RaftMessageReceiver{
      * By assigning a random duration between {@code MIN_TIMEOUT_MS} and {@code MAX_TIMEOUT_MS}, 
      * it ensures that nodes do not time out and start elections simultaneously, which would 
      * otherwise lead to repeated failed election cycles where no candidate can gather a quorum.</p>
-     * * 
      *
      * <p><b>Usage Contexts:</b>
      * <ul>
@@ -1331,8 +1316,6 @@ public class Node<T> implements RaftMessageReceiver{
      * obsolete information such as stale leaders or candidates. Terms are monotonically 
      * increasing integers, and each node stores its {@code currentTerm} on stable storage 
      * to ensure consistency across restarts.</p>
-     *
-     * 
      *
      * <p><b>Usage in Protocol:</b>
      * <ul>
@@ -1492,8 +1475,6 @@ public class Node<T> implements RaftMessageReceiver{
      * monotonically increasing and 1-based) and the local storage list. It accounts for 
      * log compaction by utilizing {@link #getLocalIndex(long)} to find the relative 
      * offset of the entry after previous entries have been snapshotted and discarded.</p>
-     *
-     * 
      *
      * <p><b>Retrieval Logic:</b>
      * <ul>

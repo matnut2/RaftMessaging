@@ -302,7 +302,7 @@ public class HttpNetwork implements Network{
             boolean success = castedNode.propose("HTTPClient", System.currentTimeMillis(), body.toString());
             
             if (success) {
-                sendJsonResponse(exchange, 200, "{\"status\": \"Proposta accettata dal Leader\"}");
+                sendJsonResponse(exchange, 200, "{\"status\": \"Proposition accepted by the leader\"}");
             } else {
                 String leaderId = castedNode.getCurrentLeaderID();
                 if (leaderId != null) {
@@ -314,7 +314,7 @@ public class HttpNetwork implements Network{
                         return;
                     }
                 }
-                sendJsonResponse(exchange, 503, "{\"error\": \"Nodo non Leader e Leader attualmente sconosciuto\"}");
+                sendJsonResponse(exchange, 503, "{\"error\": \"Not-Leader Node or Unknown Node\"}");
             }
         } catch (Exception e) {
             sendJsonResponse(exchange, 500, "{\"error\": \"" + e.getMessage() + "\"}");

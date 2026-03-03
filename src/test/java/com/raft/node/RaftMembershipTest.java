@@ -83,7 +83,7 @@ public class RaftMembershipTest {
         Thread.sleep(1000);
 
         assertThat(nodeD.getLogCopy().size())
-            .as("Il nodo D dovrebbe aver ricevuto i log replicati dal leader")
+            .as("Node D should have received replicated logs from the leader")
             .isGreaterThan(0);
             
         System.out.println("Test Room Status on D: " + nodeD.get("test_room"));
@@ -115,7 +115,7 @@ public class RaftMembershipTest {
                 .orElseThrow();
 
         String targetId = targetToRemove.getNodeID();
-        System.out.println("Leader: " + leader.getNodeID() + " | Rimuovo: " + targetId);
+        System.out.println("Leader: " + leader.getNodeID() + " | Removing: " + targetId);
 
         boolean removed = leader.removeServer(targetId);
         assertThat(removed).isTrue();
@@ -132,7 +132,7 @@ public class RaftMembershipTest {
 
         int logSizeAfter = targetToRemove.getLogCopy().size();
         assertThat(logSizeAfter)
-            .as("Il log del nodo rimosso non deve crescere")
+            .as("Log from removed node should not increase")
             .isEqualTo(logSizeBefore);
             
         assertThat(targetToRemove.getRole()).isEqualTo(Role.FOLLOWER);
