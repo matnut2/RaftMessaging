@@ -6,10 +6,11 @@
     <title>Raft Distributed Chat</title>
     <style>
         body { font-family: Arial, sans-serif; background-color: #f4f4f9; display: flex; justify-content: center; padding: 20px; }
-        .chat-container { width: 100%; max-width: 600px; background: white; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); overflow: hidden; display: flex; flex-direction: column; height: 80vh; }
+        .chat-container { width: 100%; max-width: 800px; background: white; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); overflow: hidden; display: flex; flex-direction: column; height: 80vh; }
         .header { background: #007bff; color: white; padding: 15px; text-align: center; font-weight: bold; }
-        .controls { padding: 10px; background: #e9ecef; display: flex; gap: 10px; border-bottom: 1px solid #ddd; }
-        .controls input { flex: 1; padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+        .controls { padding: 10px; background: #e9ecef; display: flex; gap: 10px; border-bottom: 1px solid #ddd; align-items: center; flex-wrap: wrap; }
+        .controls label { font-size: 0.9em; font-weight: bold; }
+        .controls input, .controls select { flex: 1; min-width: 120px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
         .chat-box { flex: 1; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; background: #fafafa; }
         .message { background: #e1f5fe; padding: 10px; border-radius: 8px; border-left: 4px solid #03a9f4; align-self: flex-start; max-width: 80%; word-wrap: break-word; }
         .input-area { display: flex; padding: 15px; background: white; border-top: 1px solid #ddd; gap: 10px; }
@@ -25,9 +26,13 @@
     <div class="header">Raft Distributed Chat</div>
     
     <div class="controls">
+        <label for="usernameInput">Utente:</label>
+        <input type="text" id="usernameInput" placeholder="Il tuo nome">
+        
         <label for="roomInput">Stanza:</label>
         <input type="text" id="roomInput" value="chat_generale">
-        <label for="nodeInput">Nodo Gateway:</label>
+        
+        <label for="nodeInput">Gateway:</label>
         <select id="nodeInput">
             <option value="http://127.0.0.1:8081">Nodo A (8081)</option>
             <option value="http://127.0.0.1:8082">Nodo B (8082)</option>
@@ -48,12 +53,12 @@
 
 <script>
     const chatBox = document.getElementById('chatBox');
+    const usernameInput = document.getElementById('usernameInput');
     const roomInput = document.getElementById('roomInput');
     const nodeInput = document.getElementById('nodeInput');
     const messageInput = document.getElementById('messageInput');
     const statusArea = document.getElementById('statusArea');
 
-    // Polling periodico per leggere i messaggi
     async function fetchMessages() {
         const room = roomInput.value.trim() || 'chat_generale';
         const baseUrl = nodeInput.value;
@@ -72,7 +77,6 @@
         }
     }
 
-    // Rendering dei messaggi nella UI
     function renderMessages(messages) {
         chatBox.innerHTML = '';
         if (messages.length === 0) {
@@ -90,19 +94,25 @@
         chatBox.scrollTop = chatBox.scrollHeight;
     }
 
-    // Invio di un nuovo messaggio
     async function sendMessage() {
         const room = roomInput.value.trim() || 'chat_generale';
         const message = messageInput.value.trim();
+        let username = usernameInput.value.trim();
         const baseUrl = nodeInput.value;
 
         if (!message) return;
+        
+        if (!username) {
+            username = "Anonimo";
+            usernameInput.value = username;
+        }
 
-        const payload = `SEND ${room} ${message}`;
-        messageInput.value = ''; // Pulisce l'input
+        usernameInput.disabled = true;
+
+        const payload = `SEND ${room} [${username}]: ${message}`;
+        messageInput.value = ''; 
 
         try {
-            // L'API fetch del browser segue automaticamente il redirect 307
             const response = await fetch(`${baseUrl}/clientPropose`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'text/plain' },
@@ -110,7 +120,7 @@
             });
 
             if (response.ok) {
-                fetchMessages(); // Aggiorna subito la chat
+                fetchMessages(); 
             } else {
                 throw new Error(`Impossibile inviare. Status: ${response.status}`);
             }
@@ -125,9 +135,8 @@
         }
     }
 
-    // Avvia il polling ogni 1000 millisecondi (1 secondo)
     setInterval(fetchMessages, 1000);
-    fetchMessages(); // Prima chiamata immediata
+    fetchMessages(); 
 </script>
 
 </body>
