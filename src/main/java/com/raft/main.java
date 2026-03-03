@@ -11,9 +11,9 @@ public class main {
         String nodeId = args.length > 0 ? args[0] : "A";
 
         Map<String, String> clusterAddresses = Map.of(
-            "A", "http://127.0.0.1:8081",
-            "B", "http://127.0.0.1:8082",
-            "C", "http://127.0.0.1:8083"
+            "A", "http://node-a:8081",
+            "B", "http://node-b:8082",
+            "C", "http://node-c:8083"
         );
 
         int localPort;

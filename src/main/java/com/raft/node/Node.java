@@ -210,7 +210,10 @@ public class Node<T> implements RaftMessageReceiver{
                 vThreadExecutor.submit(() -> 
                     network.sendPreVote(peerID, request)
                         .thenAccept(this::handlePreVoteResponse)
-                        .exceptionally(ex -> null) 
+                        .exceptionally(ex -> {
+    System.err.println("Errore RPC verso un peer: " + ex.getMessage());
+    return null;
+})
                 );
             }
         } finally {
@@ -298,7 +301,10 @@ public class Node<T> implements RaftMessageReceiver{
                 vThreadExecutor.submit(() -> 
                     network.sendRequestVote(peerID, request)
                         .thenAccept(this::handleVoteResponse)
-                        .exceptionally(ex -> null) 
+                        .exceptionally(ex -> {
+    System.err.println("Errore RPC verso un peer: " + ex.getMessage());
+    return null;
+}) 
                 );
             }
         } finally {
@@ -372,7 +378,10 @@ private void sendSnapshotToPeer(String peerID) {
                         sendSnapshotChunk(peerID, snapshotBytes, offset + length);
                     }
                 })
-                .exceptionally(ex -> null)
+                .exceptionally(ex -> {
+    System.err.println("Errore RPC verso un peer: " + ex.getMessage());
+    return null;
+})
         );
     }
     private void handleInstallSnapshotResponse(String peerID, InstallSnapshotResponse response) {
@@ -416,7 +425,10 @@ private void sendSnapshotToPeer(String peerID) {
         vThreadExecutor.submit(() -> 
             network.sendAppendEntries(peerID, request)
                 .thenAccept(response -> handleAppendEntriesResponse(peerID, response, entriesToSend.size()))
-                .exceptionally(ex -> null) 
+                .exceptionally(ex -> {
+    System.err.println("Errore RPC verso un peer: " + ex.getMessage());
+    return null;
+}) 
         );
     }
 
@@ -897,7 +909,10 @@ private void sendSnapshotToPeer(String peerID) {
                             }
                         }
                     })
-                    .exceptionally(e -> null)
+                    .exceptionally(ex -> {
+    System.err.println("Errore RPC verso un peer: " + ex.getMessage());
+    return null;
+})
             );
         }
         
