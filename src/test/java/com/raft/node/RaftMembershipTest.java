@@ -78,7 +78,7 @@ public class RaftMembershipTest {
 
         assertThat(leader.getPeers()).contains("D");
 
-        leader.propose("Client1", 1, "SET testKey=testValue");
+        leader.propose("Client1", 1, "SEND test_room testValue");
         
         Thread.sleep(1000);
 
@@ -86,7 +86,7 @@ public class RaftMembershipTest {
             .as("Il nodo D dovrebbe aver ricevuto i log replicati dal leader")
             .isGreaterThan(0);
             
-        System.out.println("Stato di testKey su D: " + nodeD.get("testKey"));
+        System.out.println("Stato di test_room su D: " + nodeD.get("test_room"));
     }
 
     @Test
@@ -117,7 +117,6 @@ public class RaftMembershipTest {
         String targetId = targetToRemove.getNodeID();
         System.out.println("Leader: " + leader.getNodeID() + " | Rimuovo: " + targetId);
 
-
         boolean removed = leader.removeServer(targetId);
         assertThat(removed).isTrue();
 
@@ -127,7 +126,7 @@ public class RaftMembershipTest {
 
         int logSizeBefore = targetToRemove.getLogCopy().size();
 
-        leader.propose("Client1", 2, "SET afterRemoval=true");
+        leader.propose("Client1", 2, "SEND test_room afterRemoval=true");
         
         Thread.sleep(1000);
 

@@ -69,7 +69,7 @@ public class RaftSnapshotTest {
 
         System.out.println("--- Writing Data (Victim is offline) ---");
         for (int i = 0; i < 10; i++) {
-            leader.propose("ClientA", 1, "SET key" + i + "=value" + i);
+            leader.propose("ClientA", i + 1, "SEND history_room Messaggio_" + i);
             Thread.sleep(100); 
         }
 
@@ -87,10 +87,10 @@ public class RaftSnapshotTest {
 
         System.out.println("Checking consistency...");
         
-        String value9 = victim.get("key9");
-        assertThat(value9)
-            .as("Victim should have received key9 via Snapshot")
-            .isEqualTo("value9");
+        String history = victim.get("history_room");
+        assertThat(history)
+            .as("Victim should have received messages via Snapshot")
+            .contains("Messaggio_9");
 
         assertThat(victim.getLogCopy().size())
             .as("Victim log should be truncated after installing snapshot")

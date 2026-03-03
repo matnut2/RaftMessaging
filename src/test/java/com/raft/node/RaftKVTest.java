@@ -25,9 +25,7 @@ public class RaftKVTest {
     void tearDown() {
         cluster.forEach(Node::stop);
         cluster.clear();
-        deleteNodeFiles("A");
-        deleteNodeFiles("B");
-        deleteNodeFiles("C");
+        cleanupStorage();
     }
 
     private void cleanupStorage() {
@@ -45,19 +43,15 @@ public class RaftKVTest {
 
     private void deleteFileWithRetry(File file) {
         if (!file.exists()) return;
-        
-        // Riprova per 500ms se il file è bloccato
         for (int i = 0; i < 10; i++) {
             if (file.delete()) return;
             try { Thread.sleep(50); } catch (InterruptedException e) { }
         }
-        System.err.println("WARNING: Could not delete file " + file.getName());
     }
 
     @Test
-    void clusterShouldActAsKeyValueStore() throws InterruptedException {
-        System.out.println("=== TEST: Distributed Key-Value Store ===");
-        
+    void clusterShouldActAsMessageStore() throws InterruptedException {
+        System.out.println("=== TEST: Distributed Messaging Store ===");
         
         InMemoryNetwork network = new InMemoryNetwork(false); 
         Node<String> nodeA = new Node<>("A", List.of("B", "C"), network);
@@ -70,7 +64,6 @@ public class RaftKVTest {
 
         nodeA.start(); nodeB.start(); nodeC.start();
 
-        
         Thread.sleep(3000);
         Node<String> leader = cluster.stream()
                 .filter(n -> n.getRole() == Role.LEADER)
@@ -79,74 +72,25 @@ public class RaftKVTest {
         
         System.out.println("👑 Leader: " + leader.getNodeID());
 
-        
-        
         System.out.println("--- WRITING DATA ---");
-        leader.propose("ClientA", 1,"SET username=admin");
-        leader.propose("ClientA", 2,"SET currency=EUR");
-        leader.propose("ClientA", 3,"SET status=active");
-        
+        leader.propose("ClientA", 1, "SEND general Ciao a tutti");
+        leader.propose("ClientA", 2, "SEND general Benvenuti nel cluster");
+        leader.propose("ClientA", 3, "SEND private_room Messaggio segreto");
         
         Thread.sleep(2000);
 
-        
-        
         System.out.println("--- READING DATA ---");
-        
         for (Node<String> node : cluster) {
-            String user = node.get("username");
-            String curr = node.get("currency");
+            String generalChat = node.get("general");
+            String privateChat = node.get("private_room");
             
-            System.out.println("Node " + node.getNodeID() + " has username=" + user);
-
-            if (user != null){
-                assertThat(user).isEqualTo("admin");
-                assertThat(curr).isEqualTo("EUR");
+            if (generalChat != null && !generalChat.startsWith("Nessun messaggio")){
+                assertThat(generalChat).contains("Ciao a tutti");
+                assertThat(generalChat).contains("Benvenuti nel cluster");
+                assertThat(privateChat).contains("Messaggio segreto");
             } else {
-                    System.err.println("❌ Node " + node.getNodeID() + " returned NULL! (Replication lag?)");
-                }
+                System.err.println("❌ Node " + node.getNodeID() + " returned unexpected value!");
+            }
         }
-
-        
-        System.out.println("--- UPDATING DATA ---");
-        leader.propose("ClientA", 4, "SET currency=USD");
-        leader.propose("ClientA", 5, "DEL status"); 
-    
-        
-        Node<String> follower = cluster.stream()
-                .filter(n -> n != leader)
-                .findFirst()
-                .orElseThrow();
-
-        System.out.println("Checking update on follower " + follower.getNodeID());
-
-        awaitValue(follower, "currency", "USD", 5000);
-        
-        assertThat(follower.get("currency")).isEqualTo("USD");
-        
-        awaitValue(follower, "status", null, 5000);
-        assertThat(follower.get("status")).isNull();
-
-        System.out.println("✅ Test Passed: Il cluster si comporta come un Database coerente!");
-    }
-
-    private void awaitValue(Node<String> node, String key, String expectedValue, long timeoutMs) throws InterruptedException {
-        long start = System.currentTimeMillis();
-        while (System.currentTimeMillis() - start < timeoutMs) {
-            try {
-                String current = node.get(key);
-                
-                if (expectedValue == null) {
-                    if (current == null) return;
-                } else {
-                    if (expectedValue.equals(current)) return;
-                }
-            } catch (Exception e) {
-                
-                        }
-            
-            Thread.sleep(100);
-        }
-        System.err.println("Timeout waiting for key=" + key);
     }
 }

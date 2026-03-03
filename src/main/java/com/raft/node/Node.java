@@ -39,11 +39,11 @@ public class Node<T> implements RaftMessageReceiver{
     private final Storage<T> storage;
 
     private final AtomicLong lastElectionResetTime;
-    private final int MIN_TIMEOUT_MS = 1500;
-    private final int MAX_TIMEOUT_MS = 3000;
+    private final int MIN_TIMEOUT_MS = 150;
+    private final int MAX_TIMEOUT_MS = 300;
     private final int heartbeatInterval = 500;
     private final Map<String, Long> clientSession = new ConcurrentHashMap<>();
-    private final int electionTimeout;
+    private int electionTimeout;
     private final ByteArrayOutputStream snapshotBuffer = new ByteArrayOutputStream();
 
     private long currentTerm;
@@ -66,7 +66,7 @@ public class Node<T> implements RaftMessageReceiver{
     private volatile boolean isRemovedFromCluster = false;
 
     
-    private final Map<String, String> stateMachine = new ConcurrentHashMap<>();
+    private final Map<String, List<String>> stateMachine = new ConcurrentHashMap<>();
 
     public Node(String nodeID, List<String> peers, Network network) {
         this.nodeID = nodeID;
@@ -665,16 +665,15 @@ private void sendSnapshotToPeer(String peerID) {
 
     private void applyCommand(String command) {
         try {
-            if (command.startsWith("SET ")) {
-                String[] parts = command.substring(4).split("=");
-                if (parts.length == 2) {
-                    stateMachine.put(parts[0].trim(), parts[1].trim());
-                    System.out.println("✅ NODE " + nodeID + " APPLIED DB: " + parts[0] + "=" + parts[1]);
+            if (command.startsWith("SEND ")) {
+                int firstSpace = command.indexOf(' ', 5);
+                if (firstSpace != -1) {
+                    String room = command.substring(5, firstSpace).trim();
+                    String message = command.substring(firstSpace + 1).trim();
+                    
+                    stateMachine.computeIfAbsent(room, k -> new CopyOnWriteArrayList<>()).add(message);
+                    System.out.println("💬 NODE " + nodeID + " ha aggiunto un messaggio alla stanza [" + room + "]");
                 }
-            } else if (command.startsWith("DEL ")) {
-                String key = command.substring(4).trim();
-                stateMachine.remove(key);
-                
             } else if (command.startsWith("CONF_ADD_SERVER=")) {
                 String newPeer = command.substring(16).trim();
                 if (!peers.contains(newPeer) && !newPeer.equals(nodeID)) {
@@ -702,22 +701,20 @@ private void sendSnapshotToPeer(String peerID) {
                     isRemovedFromCluster = true;
                 }
             }
-            
         } catch (Exception e) {
             System.err.println("Error applying command: " + command);
         }
     }
 
     
-    public String get(String key) {
+    public String get(String room) {
         if (getRole() != Role.LEADER) {
             String leader = currentLeaderID;
-
             if (leader == null) 
                 throw new RuntimeException("Service Unavailable: NO Leader Known");
             
             try{
-                return network.sendClientGet(leader, key).join();
+                return network.sendClientGet(leader, room).join();
             }
             catch (Exception e){
                 throw new RuntimeException("Error forwarding request to leader " + leader, e);
@@ -743,7 +740,11 @@ private void sendSnapshotToPeer(String peerID) {
             }
         }
 
-        return stateMachine.get(key);
+        List<String> messages = stateMachine.get(room);
+        if (messages == null || messages.isEmpty()) {
+            return "Nessun messaggio nella stanza [" + room + "]";
+        }
+        return String.join("\n", messages);
     }
     
     public void resetElectionTimer() {
@@ -928,7 +929,7 @@ private void sendSnapshotToPeer(String peerID) {
         try (ByteArrayInputStream bais = new ByteArrayInputStream(bytes);
              ObjectInputStream ois = new ObjectInputStream(bais)) {
             
-            Map<String, String> parsedStateMachine = (Map<String, String>) ois.readObject();
+            Map<String, List<String>> parsedStateMachine = (Map<String, List<String>>) ois.readObject();
             Map<String, Long> parsedClientSession = (Map<String, Long>) ois.readObject();
             
             this.stateMachine.clear();
@@ -941,7 +942,7 @@ private void sendSnapshotToPeer(String peerID) {
             throw new RuntimeException("Error deserializing snapshot state", e);
         }
     }
-
+    
     public boolean addServer(String newPeerID) {
         lock.lock();
         try {

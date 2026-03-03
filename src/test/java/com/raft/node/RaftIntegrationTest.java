@@ -10,159 +10,37 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 public class RaftIntegrationTest {
 
-    
     private final List<Node<String>> cluster = new ArrayList<>();
 
     @AfterEach
     void tearDown() {
-        
         cluster.forEach(Node::stop);
         cluster.clear();
-
         deleteNodeFiles("A");
         deleteNodeFiles("B");
         deleteNodeFiles("C");
     }
 
     private void deleteNodeFiles(String nodeId) {
-        new File("raft_node_" + nodeId + ".meta").delete();
-        new File("raft_node_" + nodeId + ".wal").delete();
-        new File("raft_node_" + nodeId + ".snapshot").delete();
-    }
-    
-    @Test
-    void clusterShouldElectLeaderAndStabilize() throws InterruptedException {
-        
-        InMemoryNetwork network = new InMemoryNetwork(true);
-        
-        Node<String> nodeA = new Node<>("A", List.of("B", "C"), network);
-        Node<String> nodeB = new Node<>("B", List.of("A", "C"), network);
-        Node<String> nodeC = new Node<>("C", List.of("A", "B"), network);
-
-        
-        network.addNode(nodeA); cluster.add(nodeA);
-        network.addNode(nodeB); cluster.add(nodeB);
-        network.addNode(nodeC); cluster.add(nodeC);
-
-        
-        System.out.println("--- Starting Cluster ---");
-        nodeA.start();
-        nodeB.start();
-        nodeC.start();
-
-        
-        System.out.println("Waiting for election to finalize...");
-        Thread.sleep(5000);
-
-        
-        List<Node<String>> leaders = cluster.stream()
-                .filter(n -> n.getRole() == Role.LEADER)
-                .toList();
-
-        System.out.println("Leaders found: " + leaders.size());
-        cluster.forEach(n -> 
-            System.out.println("Node " + n.getNodeID() + ": " + n.getRole() + " (Term " + n.getTerm() + ")")
-        );
-
-        
-        assertThat(leaders).hasSize(1);
-        
-        Node<String> leader = leaders.get(0);
-        long initialTerm = leader.getTerm();
-
-        
-        
-        
-        System.out.println("Waiting for stabilization check...");
-        Thread.sleep(2000);
-
-        assertThat(leader.getRole())
-                .as("Leader should maintain leadership")
-                .isEqualTo(Role.LEADER);
-
-        assertThat(leader.getTerm())
-                .as("Term should not change if heartbeats are working")
-                .isEqualTo(initialTerm);
-
-        
-        long leaderTerm = leader.getTerm();
-        cluster.stream()
-               .filter(n -> n != leader)
-               .forEach(follower -> {
-                   assertThat(follower.getRole()).isEqualTo(Role.FOLLOWER);
-                   assertThat(follower.getTerm()).isLessThanOrEqualTo(leaderTerm);
-               });
+        deleteFileWithRetry(new File("raft_node_" + nodeId + ".meta"));
+        deleteFileWithRetry(new File("raft_node_" + nodeId + ".wal"));
+        deleteFileWithRetry(new File("raft_node_" + nodeId + ".snapshot"));
     }
 
-    @Test
-    void shouldReplicateCommandsToFollowers() throws InterruptedException {
-        
-        InMemoryNetwork network = new InMemoryNetwork(true);
-
-        
-        
-        Node<String> nodeA = new Node<>("A", List.of("B", "C"), network);
-        Node<String> nodeB = new Node<>("B", List.of("A", "C"), network);
-        Node<String> nodeC = new Node<>("C", List.of("A", "B"), network);
-
-        
-        network.addNode(nodeA); cluster.add(nodeA);
-        network.addNode(nodeB); cluster.add(nodeB);
-        network.addNode(nodeC); cluster.add(nodeC);
-
-        
-        System.out.println("--- Starting Cluster ---");
-        nodeA.start();
-        nodeB.start();
-        nodeC.start();
-
-        
-        System.out.println("Waiting for election to finalize...");
-        Thread.sleep(5000);
-
-        
-        Node<String> leader = cluster.stream()
-                .filter(n -> n.getRole() == Role.LEADER)
-                .findFirst()
-                .orElseThrow(() -> new AssertionError("No Leader found!"));
-
-        System.out.println("Leader elected: " + leader.getNodeID());
-
-        
-        System.out.println("--- Sending Command 'CMD_1' ---");
-        boolean accepted = leader.propose("ClientA", 1, "CMD_1");
-        
-        assertThat(accepted)
-            .as("Leader should accept the proposal")
-            .isTrue();
-
-        
-        Thread.sleep(2000);
-
-        
-        for (Node<String> node : cluster) {
-            List<LogEntry<String>> log = node.getLogCopy();
-            
-            System.out.println("Node " + node.getNodeID() + " Log: " + log);
-
-            assertThat(log)
-                .as("Node %s should have exactly 1 entry", node.getNodeID())
-                .hasSize(1);
-            
-            assertThat(log.get(0).command())
-                .as("Node %s should have the correct command", node.getNodeID())
-                .isEqualTo("CMD_1");
+    private void deleteFileWithRetry(File file) {
+        if (!file.exists()) return;
+        for (int i = 0; i < 10; i++) {
+            if (file.delete()) return;
+            try { Thread.sleep(50); } catch (InterruptedException e) { }
         }
     }
 
     @Test
-    void shouldCommitAndExecuteCommandOnMajority() throws InterruptedException {
-        
+    void clusterShouldElectLeaderAndStabilize() throws InterruptedException {
         InMemoryNetwork network = new InMemoryNetwork(true);
         Node<String> nodeA = new Node<>("A", List.of("B", "C"), network);
         Node<String> nodeB = new Node<>("B", List.of("A", "C"), network);
@@ -175,7 +53,98 @@ public class RaftIntegrationTest {
         System.out.println("--- Starting Cluster ---");
         nodeA.start(); nodeB.start(); nodeC.start();
 
+        System.out.println("Waiting for election to finalize...");
+        Thread.sleep(5000);
+
+        List<Node<String>> leaders = cluster.stream()
+                .filter(n -> n.getRole() == Role.LEADER)
+                .toList();
+
+        System.out.println("Leaders found: " + leaders.size());
+        cluster.forEach(n -> 
+            System.out.println("Node " + n.getNodeID() + ": " + n.getRole() + " (Term " + n.getTerm() + ")")
+        );
+
+        assertThat(leaders).hasSize(1);
         
+        Node<String> leader = leaders.get(0);
+        long initialTerm = leader.getTerm();
+
+        System.out.println("Waiting for stabilization check...");
+        Thread.sleep(2000);
+
+        assertThat(leader.getRole())
+                .as("Leader should maintain leadership")
+                .isEqualTo(Role.LEADER);
+
+        assertThat(leader.getTerm())
+                .as("Term should not change if heartbeats are working")
+                .isEqualTo(initialTerm);
+
+        long leaderTerm = leader.getTerm();
+        cluster.stream()
+               .filter(n -> n != leader)
+               .forEach(follower -> {
+                   assertThat(follower.getRole()).isEqualTo(Role.FOLLOWER);
+                   assertThat(follower.getTerm()).isLessThanOrEqualTo(leaderTerm);
+               });
+    }
+
+    @Test
+    void shouldReplicateCommandsToFollowers() throws InterruptedException {
+        InMemoryNetwork network = new InMemoryNetwork(true);
+        Node<String> nodeA = new Node<>("A", List.of("B", "C"), network);
+        Node<String> nodeB = new Node<>("B", List.of("A", "C"), network);
+        Node<String> nodeC = new Node<>("C", List.of("A", "B"), network);
+
+        network.addNode(nodeA); cluster.add(nodeA);
+        network.addNode(nodeB); cluster.add(nodeB);
+        network.addNode(nodeC); cluster.add(nodeC);
+
+        System.out.println("--- Starting Cluster ---");
+        nodeA.start(); nodeB.start(); nodeC.start();
+
+        System.out.println("Waiting for election to finalize...");
+        Thread.sleep(5000);
+
+        Node<String> leader = cluster.stream()
+                .filter(n -> n.getRole() == Role.LEADER)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("No Leader found!"));
+
+        System.out.println("Leader elected: " + leader.getNodeID());
+
+        System.out.println("--- Sending Command 'SEND test_room CMD_1' ---");
+        boolean accepted = leader.propose("ClientA", 1, "SEND test_room CMD_1");
+        
+        assertThat(accepted)
+            .as("Leader should accept the proposal")
+            .isTrue();
+
+        Thread.sleep(2000);
+
+        for (Node<String> node : cluster) {
+            List<LogEntry<String>> log = node.getLogCopy();
+            System.out.println("Node " + node.getNodeID() + " Log: " + log);
+            assertThat(log).hasSize(1);
+            assertThat(log.get(0).command()).isEqualTo("SEND test_room CMD_1");
+        }
+    }
+
+    @Test
+    void shouldCommitAndExecuteCommandOnMajority() throws InterruptedException {
+        InMemoryNetwork network = new InMemoryNetwork(true);
+        Node<String> nodeA = new Node<>("A", List.of("B", "C"), network);
+        Node<String> nodeB = new Node<>("B", List.of("A", "C"), network);
+        Node<String> nodeC = new Node<>("C", List.of("A", "B"), network);
+
+        network.addNode(nodeA); cluster.add(nodeA);
+        network.addNode(nodeB); cluster.add(nodeB);
+        network.addNode(nodeC); cluster.add(nodeC);
+
+        System.out.println("--- Starting Cluster ---");
+        nodeA.start(); nodeB.start(); nodeC.start();
+
         System.out.println("Waiting for election...");
         Thread.sleep(5000);
 
@@ -186,26 +155,20 @@ public class RaftIntegrationTest {
 
         System.out.println("Leader elected: " + leader.getNodeID());
 
-        
-        System.out.println("--- Proposing Command 'SET_X=10' ---");
-        boolean accepted = leader.propose("clientA", 1,"SET_X=10");
+        System.out.println("--- Proposing Command 'SEND test_room SET_X=10' ---");
+        boolean accepted = leader.propose("clientA", 1,"SEND test_room SET_X=10");
         assertThat(accepted).isTrue();
         
         Thread.sleep(2000);
 
-        
-        
         assertThat(leader.getCommitIndex())
                 .as("Leader should have committed the entry")
                 .isGreaterThanOrEqualTo(0);
 
-        
         assertThat(leader.getLastApplied())
                 .as("Leader should have executed the command")
                 .isGreaterThan(0);
 
-        
-        
         for (Node<String> node : cluster) {
             if (node == leader) continue;
 
@@ -226,29 +189,23 @@ public class RaftIntegrationTest {
     @Test
     void followerShouldRejectInconsistentLog() throws InterruptedException {
         InMemoryNetwork network = new InMemoryNetwork(false); 
-
-        
         Node<String> nodeA = new Node<>("A", List.of("B"), network);
         Node<String> nodeB = new Node<>("B", List.of("A"), network);
         
         network.addNode(nodeA); cluster.add(nodeA);
         network.addNode(nodeB); cluster.add(nodeB);
         
-        nodeA.start();
-        nodeB.start();
+        nodeA.start(); nodeB.start();
 
-        
         Thread.sleep(1000); 
         Node<String> leader = (nodeA.getRole() == Role.LEADER) ? nodeA : nodeB;
         Node<String> follower = (leader == nodeA) ? nodeB : nodeA;
         
-        
-        leader.propose("Clienta", 1, "X=1");
+        leader.propose("Clienta", 1, "SEND test_room X=1");
         Thread.sleep(500); 
         
-        
         assertThat(follower.getLogCopy()).hasSize(1);
-        leader.propose("ClientA", 2, "Y=2");
+        leader.propose("ClientA", 2, "SEND test_room Y=2");
         Thread.sleep(500);
         assertThat(follower.getLogCopy()).hasSize(2);
         
@@ -258,7 +215,6 @@ public class RaftIntegrationTest {
     @Test
     void committedDataShouldSurviveLeaderCrash() throws InterruptedException {
         System.out.println("=== TEST: Leader Failover ===");
-        
         
         InMemoryNetwork network = new InMemoryNetwork(true);
         Node<String> nodeA = new Node<>("A", List.of("B", "C"), network);
@@ -271,7 +227,6 @@ public class RaftIntegrationTest {
 
         nodeA.start(); nodeB.start(); nodeC.start();
 
-        
         Thread.sleep(3000);
         Node<String> firstLeader = cluster.stream()
                 .filter(n -> n.getRole() == Role.LEADER)
@@ -280,20 +235,16 @@ public class RaftIntegrationTest {
         
         System.out.println("First Leader is: " + firstLeader.getNodeID());
 
-        
-        firstLeader.propose("ClientA", 1, "CRITICAL_DATA");
+        firstLeader.propose("ClientA", 1, "SEND test_room CRITICAL_DATA");
         Thread.sleep(2000); 
         
         assertThat(firstLeader.getCommitIndex()).isGreaterThanOrEqualTo(0);
 
-        
         System.out.println("KILLING LEADER " + firstLeader.getNodeID() + " ☠️");
         firstLeader.stop();
         
-        
         Thread.sleep(3000);
 
-        
         Node<String> newLeader = cluster.stream()
                 .filter(n -> n != firstLeader)
                 .filter(n -> n.getRole() == Role.LEADER)
@@ -302,34 +253,22 @@ public class RaftIntegrationTest {
 
         System.out.println("New Leader is: " + newLeader.getNodeID());
 
-        
-        
         List<LogEntry<String>> newLeaderLog = newLeader.getLogCopy();
         assertThat(newLeaderLog).hasSize(1);
-        assertThat(newLeaderLog.get(0).command()).isEqualTo("CRITICAL_DATA");
+        assertThat(newLeaderLog.get(0).command()).isEqualTo("SEND test_room CRITICAL_DATA");
 
-        
-        newLeader.propose("ClientB", 1, "NEW_ERA_DATA");
+        newLeader.propose("ClientB", 1, "SEND test_room NEW_ERA_DATA");
         Thread.sleep(2000);
 
-        
         System.out.println("RESURRECTING " + firstLeader.getNodeID() + " ✨");
-        
-        
-        
-        
-        
         
         for (Node<String> n : cluster) {
             if (n != firstLeader && n != newLeader) {
                 List<LogEntry<String>> log = n.getLogCopy();
                 System.out.println("Follower " + n.getNodeID() + " Log: " + log);
                 assertThat(log).hasSize(2); 
-                assertThat(log.get(1).command()).isEqualTo("NEW_ERA_DATA");
+                assertThat(log.get(1).command()).isEqualTo("SEND test_room NEW_ERA_DATA");
             }
         }
     }
-
-    
-
 }
