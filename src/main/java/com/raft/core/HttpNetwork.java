@@ -151,12 +151,24 @@ public class HttpNetwork implements Network{
             }
             
             com.raft.node.Node<String> castedNode = (com.raft.node.Node<String>) localNode;
+            
             boolean success = castedNode.propose("HTTPClient", System.currentTimeMillis(), body.toString());
             
             if (success) {
-                sendTextResponse(exchange, 200, "Proposta accettata");
+                sendTextResponse(exchange, 200, "Proposta accettata dal Leader");
             } else {
-                sendTextResponse(exchange, 503, "Nodo non Leader");
+                String leaderId = castedNode.getCurrentLeaderID();
+                
+                if (leaderId != null) {
+                    String leaderUrl = peerAddresses.get(leaderId);
+                    if (leaderUrl != null) {
+                        exchange.getResponseHeaders().set("Location", leaderUrl + "/clientPropose");
+                        exchange.sendResponseHeaders(307, -1);
+                        exchange.close();
+                        return;
+                    }
+                }
+                sendTextResponse(exchange, 503, "Nodo non Leader e Leader attualmente sconosciuto");
             }
         } catch (Exception e) {
             sendTextResponse(exchange, 500, e.getMessage());
@@ -194,4 +206,6 @@ public class HttpNetwork implements Network{
             os.write(bytes);
         }
     }
+
+    
 }

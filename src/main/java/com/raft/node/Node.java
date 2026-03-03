@@ -1013,6 +1013,15 @@ private void sendSnapshotToPeer(String peerID) {
         lock.lock();
         try { return new ArrayList<>(peers); } finally { lock.unlock(); }
     }
+
+    public String getCurrentLeaderID() {
+        lock.lock();
+        try { 
+            return currentLeaderID; 
+        } finally { 
+            lock.unlock(); 
+        }
+    }
 }
 
 
