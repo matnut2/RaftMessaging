@@ -86,7 +86,7 @@ public class RaftMembershipTest {
             .as("Il nodo D dovrebbe aver ricevuto i log replicati dal leader")
             .isGreaterThan(0);
             
-        System.out.println("Stato di test_room su D: " + nodeD.get("test_room"));
+        System.out.println("Test Room Status on D: " + nodeD.get("test_room"));
     }
 
     @Test

@@ -33,7 +33,7 @@ public class main {
         network.registerLocalNode(node);
         node.start();
         
-        System.out.println("Nodo " + nodeId + " in esecuzione.");
+        System.out.println("Node " + nodeId + " in execution.");
         Thread.currentThread().join();
     }
 }

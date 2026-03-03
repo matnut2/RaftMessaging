@@ -299,7 +299,7 @@ public class Node<T> implements RaftMessageReceiver{
                     network.sendPreVote(peerID, request)
                         .thenAccept(this::handlePreVoteResponse)
                         .exceptionally(ex -> {
-    System.err.println("Errore RPC verso un peer: " + ex.getMessage());
+    System.err.println("RPC Error during Peer Communication: " + ex.getMessage());
     return null;
 })
                 );
@@ -458,7 +458,7 @@ public class Node<T> implements RaftMessageReceiver{
                     network.sendRequestVote(peerID, request)
                         .thenAccept(this::handleVoteResponse)
                         .exceptionally(ex -> {
-    System.err.println("Errore RPC verso un peer: " + ex.getMessage());
+    System.err.println("RPC Error during Peer Communication: " + ex.getMessage());
     return null;
 }) 
                 );
@@ -613,7 +613,7 @@ public class Node<T> implements RaftMessageReceiver{
                     }
                 })
                 .exceptionally(ex -> {
-    System.err.println("Errore RPC verso un peer: " + ex.getMessage());
+    System.err.println("RPC Error during Peer Communication: " + ex.getMessage());
     return null;
 })
         );
@@ -707,7 +707,7 @@ public class Node<T> implements RaftMessageReceiver{
             network.sendAppendEntries(peerID, request)
                 .thenAccept(response -> handleAppendEntriesResponse(peerID, response, entriesToSend.size()))
                 .exceptionally(ex -> {
-    System.err.println("Errore RPC verso un peer: " + ex.getMessage());
+    System.err.println("RPC Error during Peer Communication: " + ex.getMessage());
     return null;
 }) 
         );
@@ -1188,7 +1188,7 @@ public class Node<T> implements RaftMessageReceiver{
                     String message = command.substring(firstSpace + 1).trim();
                     
                     stateMachine.computeIfAbsent(room, k -> new CopyOnWriteArrayList<>()).add(message);
-                    System.out.println("💬 NODE " + nodeID + " ha aggiunto un messaggio alla stanza [" + room + "]");
+                    System.out.println("💬 NODE " + nodeID + " added a message in room [" + room + "]");
                 }
             } else if (command.startsWith("CONF_ADD_SERVER=")) {
                 String newPeer = command.substring(16).trim();
@@ -1757,7 +1757,7 @@ public class Node<T> implements RaftMessageReceiver{
                         }
                     })
                     .exceptionally(ex -> {
-    System.err.println("Errore RPC verso un peer: " + ex.getMessage());
+    System.err.println("RPC Error during Peer Communication: " + ex.getMessage());
     return null;
 })
             );
