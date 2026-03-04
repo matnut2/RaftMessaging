@@ -3,51 +3,101 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Raft Distributed Chat</title>
+    <title>Raft Cluster Chat</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
-        body { font-family: Arial, sans-serif; background-color: #f4f4f9; display: flex; justify-content: center; padding: 20px; }
-        .chat-container { width: 100%; max-width: 800px; background: white; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); overflow: hidden; display: flex; flex-direction: column; height: 80vh; }
-        .header { background: #007bff; color: white; padding: 15px; text-align: center; font-weight: bold; }
-        .controls { padding: 10px; background: #e9ecef; display: flex; gap: 10px; border-bottom: 1px solid #ddd; align-items: center; flex-wrap: wrap; }
-        .controls label { font-size: 0.9em; font-weight: bold; }
-        .controls input, .controls select { flex: 1; min-width: 120px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
-        .chat-box { flex: 1; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; background: #fafafa; }
-        .message { background: #e1f5fe; padding: 10px; border-radius: 8px; border-left: 4px solid #03a9f4; align-self: flex-start; max-width: 80%; word-wrap: break-word; }
-        .input-area { display: flex; padding: 15px; background: white; border-top: 1px solid #ddd; gap: 10px; }
-        .input-area input { flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 4px; }
-        .input-area button { padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
-        .input-area button:hover { background: #218838; }
-        .status { font-size: 0.8em; color: #666; text-align: center; padding: 5px; background: #eee; }
+        :root {
+            --bg-body: #eceff1;
+            --bg-surface: #ffffff;
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --text-main: #1e293b;
+            --text-muted: #64748b;
+            --border: #e2e8f0;
+            --msg-bg: #f1f5f9;
+            --success: #10b981;
+            --danger: #ef4444;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background-color: var(--bg-body); color: var(--text-main); height: 100vh; display: flex; align-items: center; justify-content: center; }
+        
+        .app-container { width: 95%; max-width: 1200px; height: 90vh; background: var(--bg-surface); border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); display: flex; overflow: hidden; }
+        
+        /* Sidebar */
+        .sidebar { width: 300px; background: #f8fafc; border-right: 1px solid var(--border); padding: 20px; display: flex; flex-direction: column; gap: 20px; }
+        .brand { font-size: 1.25rem; font-weight: 700; color: var(--primary); display: flex; align-items: center; gap: 10px; }
+        .control-group { display: flex; flex-direction: column; gap: 8px; }
+        .control-group label { font-size: 0.85rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+        .control-group input, .control-group select { width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 6px; outline: none; transition: border 0.2s; font-size: 0.95rem; }
+        .control-group input:focus, .control-group select:focus { border-color: var(--primary); }
+        .network-status { margin-top: auto; padding: 15px; border-radius: 8px; background: #fff; border: 1px solid var(--border); font-size: 0.85rem; }
+        .status-indicator { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--danger); margin-right: 8px; }
+        .status-indicator.active { background: var(--success); box-shadow: 0 0 8px var(--success); }
+
+        /* Main Chat Area */
+        .main-chat { flex: 1; display: flex; flex-direction: column; background: #fff; }
+        .chat-header { padding: 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+        .chat-header h2 { font-size: 1.1rem; font-weight: 600; color: var(--text-main); }
+        .room-badge { background: #e0e7ff; color: var(--primary); padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: bold; }
+        
+        .chat-box { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; background: #fafbfc; scroll-behavior: smooth; }
+        .message { display: flex; flex-direction: column; max-width: 75%; animation: fadeIn 0.3s ease; margin-bottom: 5px; }
+        .message.system { align-self: center; background: transparent; color: var(--text-muted); font-size: 0.85rem; margin: 20px 0; }
+        .message .sender { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; margin-left: 12px; }
+        .message .bubble { background: var(--msg-bg); padding: 12px 16px; border-radius: 18px; border-top-left-radius: 4px; color: var(--text-main); font-size: 0.95rem; line-height: 1.4; box-shadow: 0 1px 2px rgba(0,0,0,0.05); word-wrap: break-word; }
+        
+        .input-area { padding: 20px; background: #fff; border-top: 1px solid var(--border); display: flex; gap: 10px; }
+        .input-area input { flex: 1; padding: 14px 20px; border: 1px solid var(--border); border-radius: 30px; outline: none; font-size: 0.95rem; background: #f8fafc; transition: all 0.2s; }
+        .input-area input:focus { background: #fff; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1); }
+        .btn-send { width: 48px; height: 48px; border-radius: 50%; background: var(--primary); color: white; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; transition: background 0.2s; }
+        .btn-send:hover { background: var(--primary-hover); }
+
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     </style>
 </head>
 <body>
 
-<div class="chat-container">
-    <div class="header">Raft Distributed Chat</div>
-    
-    <div class="controls">
-        <label for="usernameInput">Utente:</label>
-        <input type="text" id="usernameInput" placeholder="Il tuo nome">
+<div class="app-container">
+    <div class="sidebar">
+        <div class="brand"><i class="fas fa-network-wired"></i> Raft Cluster</div>
         
-        <label for="roomInput">Stanza:</label>
-        <input type="text" id="roomInput" value="chat_generale">
+        <div class="control-group">
+            <label for="usernameInput">Il tuo Alias</label>
+            <input type="text" id="usernameInput" placeholder="Inserisci nome utente">
+        </div>
         
-        <label for="nodeInput">Gateway:</label>
-        <select id="nodeInput">
-            <option value="http://127.0.0.1:8081">Nodo A (8081)</option>
-            <option value="http://127.0.0.1:8082">Nodo B (8082)</option>
-            <option value="http://127.0.0.1:8083">Nodo C (8083)</option>
-        </select>
-    </div>
-
-    <div class="chat-box" id="chatBox">
+        <div class="control-group">
+            <label for="roomInput">Stanza di Replicazione</label>
+            <input type="text" id="roomInput" value="chat_generale" onchange="updateRoomBadge()">
+        </div>
+        
+        <div class="control-group">
+            <label for="nodeInput">Gateway di Accesso (Nodo)</label>
+            <select id="nodeInput" onchange="resetChat()">
+                <option value="http://127.0.0.1:8081">Nodo A (Porta 8081)</option>
+                <option value="http://127.0.0.1:8082">Nodo B (Porta 8082)</option>
+                <option value="http://127.0.0.1:8083">Nodo C (Porta 8083)</option>
+            </select>
         </div>
 
-    <div class="status" id="statusArea">In attesa di connessione...</div>
+        <div class="network-status">
+            <div style="margin-bottom: 8px; font-weight: bold; color: var(--text-main);">Stato Connessione</div>
+            <div><span class="status-indicator" id="statusDot"></span> <span id="statusArea">In attesa...</span></div>
+        </div>
+    </div>
 
-    <div class="input-area">
-        <input type="text" id="messageInput" placeholder="Scrivi un messaggio..." onkeypress="handleKeyPress(event)">
-        <button onclick="sendMessage()">Invia</button>
+    <div class="main-chat">
+        <div class="chat-header">
+            <h2>Log Distribuito</h2>
+            <span class="room-badge" id="roomBadge">#chat_generale</span>
+        </div>
+
+        <div class="chat-box" id="chatBox"></div>
+
+        <div class="input-area">
+            <input type="text" id="messageInput" placeholder="Invia un comando alla State Machine..." onkeypress="handleKeyPress(event)">
+            <button class="btn-send" onclick="sendMessage()"><i class="fas fa-paper-plane"></i></button>
+        </div>
     </div>
 </div>
 
@@ -58,6 +108,21 @@
     const nodeInput = document.getElementById('nodeInput');
     const messageInput = document.getElementById('messageInput');
     const statusArea = document.getElementById('statusArea');
+    const statusDot = document.getElementById('statusDot');
+    const roomBadge = document.getElementById('roomBadge');
+
+    let renderedMessagesCount = 0;
+
+    function updateRoomBadge() {
+        roomBadge.innerText = '#' + (roomInput.value.trim() || 'chat_generale');
+        resetChat();
+    }
+
+    function resetChat() {
+        chatBox.innerHTML = '';
+        renderedMessagesCount = 0;
+        fetchMessages();
+    }
 
     async function fetchMessages() {
         const room = roomInput.value.trim() || 'chat_generale';
@@ -65,33 +130,70 @@
 
         try {
             const response = await fetch(`${baseUrl}/clientGet?key=${room}`);
-            if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
             
             const messages = await response.json();
             renderMessages(messages);
-            statusArea.innerText = `Ultimo aggiornamento: ${new Date().toLocaleTimeString()} (via ${baseUrl})`;
-            statusArea.style.color = "green";
+            
+            statusDot.classList.add('active');
+            statusArea.innerText = `Sincronizzato (${new Date().toLocaleTimeString()})`;
+            statusArea.style.color = "var(--success)";
         } catch (error) {
-            statusArea.innerText = `Errore di connessione: ${error.message}`;
-            statusArea.style.color = "red";
+            statusDot.classList.remove('active');
+            statusArea.innerText = `Errore di Quorum / Leader`;
+            statusArea.style.color = "var(--danger)";
         }
     }
 
     function renderMessages(messages) {
-        chatBox.innerHTML = '';
         if (messages.length === 0) {
-            chatBox.innerHTML = '<div style="color: #999; text-align: center; margin-top: 20px;">Nessun messaggio in questa stanza.</div>';
+            if (chatBox.children.length === 0 || renderedMessagesCount > 0) {
+                chatBox.innerHTML = '<div class="message system">La stanza è vuota. Nessun dato nel log Raft.</div>';
+            }
+            renderedMessagesCount = 0;
             return;
         }
 
-        messages.forEach(msg => {
+        // Se il numero di messaggi è diminuito (es. dopo uno snapshot o cambio leader), resetta
+        if (messages.length < renderedMessagesCount) {
+            chatBox.innerHTML = '';
+            renderedMessagesCount = 0;
+        }
+
+        // Aggiungi solo i nuovi messaggi in modo incrementale
+        for (let i = renderedMessagesCount; i < messages.length; i++) {
+            const msg = messages[i];
+            
+            if (renderedMessagesCount === 0 && i === 0) chatBox.innerHTML = '';
+
             const div = document.createElement('div');
             div.className = 'message';
-            div.innerText = msg;
+            
+            const match = msg.match(/^\[(.*?)\]:\s(.*)$/);
+            if (match) {
+                const senderDiv = document.createElement('div');
+                senderDiv.className = 'sender';
+                senderDiv.innerText = match[1];
+                
+                const bubbleDiv = document.createElement('div');
+                bubbleDiv.className = 'bubble';
+                bubbleDiv.innerText = match[2];
+                
+                div.appendChild(senderDiv);
+                div.appendChild(bubbleDiv);
+            } else {
+                const bubbleDiv = document.createElement('div');
+                bubbleDiv.className = 'bubble';
+                bubbleDiv.innerText = msg;
+                div.appendChild(bubbleDiv);
+            }
             chatBox.appendChild(div);
-        });
+        }
 
-        chatBox.scrollTop = chatBox.scrollHeight;
+        if (messages.length > renderedMessagesCount) {
+            renderedMessagesCount = messages.length;
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
     }
 
     async function sendMessage() {
@@ -101,12 +203,8 @@
         const baseUrl = nodeInput.value;
 
         if (!message) return;
+        if (!username) { username = "Anonimo"; usernameInput.value = username; }
         
-        if (!username) {
-            username = "Anonimo";
-            usernameInput.value = username;
-        }
-
         usernameInput.disabled = true;
 
         const payload = `SEND ${room} [${username}]: ${message}`;
@@ -118,26 +216,22 @@
                 headers: { 'Content-Type': 'text/plain' },
                 body: payload
             });
-
             if (response.ok) {
-                fetchMessages(); 
+                fetchMessages();
             } else {
-                throw new Error(`Impossibile inviare. Status: ${response.status}`);
+                alert("Errore: Il nodo non è il Leader o il Quorum non è stato raggiunto.");
             }
         } catch (error) {
-            alert(`Errore durante l'invio: ${error.message}`);
+            console.error("Errore invio:", error);
+            alert("Errore di rete durante l'invio della proposta.");
         }
     }
 
-    function handleKeyPress(event) {
-        if (event.key === 'Enter') {
-            sendMessage();
-        }
-    }
-
+    function handleKeyPress(event) { if (event.key === 'Enter') sendMessage(); }
+    
+    // Polling ogni secondo per aggiornamenti dal cluster
     setInterval(fetchMessages, 1000);
     fetchMessages(); 
 </script>
-
 </body>
 </html>
