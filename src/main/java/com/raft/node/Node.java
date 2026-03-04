@@ -540,6 +540,8 @@ public class Node<T> implements RaftMessageReceiver{
         try {
             if (currentRole != Role.LEADER) return;
 
+            persist();
+
             for (String peerID : peers) {
                 int nextIdx = nextIndex.getOrDefault(peerID, 1);
                 
@@ -706,7 +708,7 @@ public class Node<T> implements RaftMessageReceiver{
 
         vThreadExecutor.submit(() -> 
             network.sendAppendEntries(peerID, request)
-                .thenAccept(response -> handleAppendEntriesResponse(peerID, response, entriesToSend.size()))
+                .thenAccept(response -> handleAppendEntriesResponse(peerID, response, request))
                 .exceptionally(ex -> {
     System.err.println("RPC Error during Peer Communication: " + ex.getMessage());
     return null;
@@ -1001,7 +1003,7 @@ public class Node<T> implements RaftMessageReceiver{
      * @param response       The {@link AppendEntriesResponse} containing the term and success status.
      * @param numEntriesSent The number of log entries that were included in the original request.
      */
-    private void handleAppendEntriesResponse(String peerID, AppendEntriesResponse response, int numEntriesSent) {
+    private void handleAppendEntriesResponse(String peerID, AppendEntriesResponse response, AppendEntriesRequest<T> request) {
         if (response == null) return; 
 
         lock.lock();
@@ -1016,15 +1018,20 @@ public class Node<T> implements RaftMessageReceiver{
             }
 
             if (response.success()) {
-                int oldNext = nextIndex.get(peerID);
-                int newNext = oldNext + numEntriesSent;
-                nextIndex.put(peerID, newNext);
-                matchIndex.put(peerID, newNext - 1);
+
+                int match = (int) (request.prevLogIndex() + request.entries().size());
+                
+                if (match > matchIndex.getOrDefault(peerID, -1)){
+                    matchIndex.put(peerID, match);
+                    nextIndex.put(peerID, match +1);
+                    updateCommitIndex();
+                }
                 updateCommitIndex();
             } else {
                 int currentNext = nextIndex.get(peerID);
                 if (currentNext > 0) {
-                    nextIndex.put(peerID, currentNext - 1);
+                    nextIndex.put(peerID, Math.max(1, (int) request.prevLogIndex()));
+                    vThreadExecutor.submit(() -> sendAppendEntriesToPeer(peerID, nextIndex.get(peerID)));
                 }
             }
         } finally {
@@ -1033,8 +1040,10 @@ public class Node<T> implements RaftMessageReceiver{
     }
 
     public boolean propose(String clientID, long sequenceNum, T command) {
-        long indexAwaiting;
+        proposalCounter.increment();
+        Timer.Sample sample = Timer.start(registry);
         
+        long indexAwaiting;
         lock.lock();
         try {
             if (currentRole != Role.LEADER) return false;
@@ -1046,34 +1055,23 @@ public class Node<T> implements RaftMessageReceiver{
             LogEntry<T> entry = new LogEntry<>(currentTerm, clientID, sequenceNum, command);
             log.add(entry);
             indexAwaiting = lastIncludedIndex + log.size();
-            persist();
-            
-            // Forza l'invio immediato dei log ai follower senza attendere il timer periodico
-            sendHearthbeats();
+            //persist();
         } finally {
-            lock.unlock(); // Rilascia il lock per non bloccare il nodo durante l'attesa
-        }
-
-        // Attesa del quorum: il metodo non restituisce true finché la maggioranza non ha replicato
-        long start = System.currentTimeMillis();
-        while (System.currentTimeMillis() - start < 3000) { // Timeout di 3 secondi
-            if (getCommitIndex() >= indexAwaiting) {
-                return true; // Replicazione avvenuta con successo sulla maggioranza
-            }
-            try { 
-                Thread.sleep(5); 
-            } catch (InterruptedException e) { 
-                Thread.currentThread().interrupt();
-                break; 
-            }
+            lock.unlock(); 
         }
         
-        return false; // Fallimento: quorum non raggiunto in tempo
+        //vThreadExecutor.submit(this::sendHearthbeats);
+
+        boolean success = waitForCommit(indexAwaiting);
+        if (success) {
+            sample.stop(commitTimer);
+        }
+        return success;
     }
 
 private boolean waitForCommit(long index) {
     long start = System.currentTimeMillis();
-    while (System.currentTimeMillis() - start < 2000) { 
+    while (System.currentTimeMillis() - start < 10000) { 
         if (getCommitIndex() >= index) {
             return true;
         }
