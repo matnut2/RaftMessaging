@@ -1151,6 +1151,7 @@ private boolean waitForCommit(long index) {
      * </p>
      */
     private void applyLog() {
+        boolean appliedAny = false;
         while (lastApplied <= commitIndex) {
             LogEntry<T> entry = getEntry(lastApplied);
             if (entry == null) break;
@@ -1160,7 +1161,15 @@ private boolean waitForCommit(long index) {
             } else {
                 System.out.println("NODE " + nodeID + " EXECUTED GENERIC: " + entry.command());
             }
+
+            clientSession.put(entry.clientID(), entry.sequenceNum());
+
             lastApplied++;
+            appliedAny = true;
+        }
+
+        if (appliedAny && log.size() > 1000){
+            vThreadExecutor.submit(this::takeSnapshot);
         }
     }
 
