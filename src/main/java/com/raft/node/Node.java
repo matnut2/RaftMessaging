@@ -68,8 +68,8 @@ public class Node<T> implements RaftMessageReceiver{
 
     private Map<String, Integer> nextIndex;
     private Map<String, Integer> matchIndex;
-    private long commitIndex = -1;
-    private long lastApplied = 0;
+    private volatile long commitIndex = -1;
+    private volatile long lastApplied = 0;
 
     private long lastIncludedIndex = -1;
     private long lastIncludedTerm = 0;
@@ -932,6 +932,7 @@ public class Node<T> implements RaftMessageReceiver{
             @SuppressWarnings("unchecked")
             List<LogEntry<T>> newEntries = (List<LogEntry<T>>) (List<?>) request.entries();
             long indexToInsert = prevLogIndex + 1;
+            boolean logChanged = false;
 
             for (LogEntry<T> entry : newEntries) {
                 if (indexToInsert < log.size()) {
@@ -939,10 +940,11 @@ public class Node<T> implements RaftMessageReceiver{
                     if (existingEntry.term() != entry.term()) {
                         log.subList((int) indexToInsert, log.size()).clear();
                         log.add(entry);
+                        logChanged = true;
                     }
-                    persist();;
                 } else {
                     log.add(entry);
+                    logChanged = true;
                 }
 
                 if (entry.command() instanceof String cmd) {
@@ -958,6 +960,8 @@ public class Node<T> implements RaftMessageReceiver{
                 
                 indexToInsert++;
             }
+
+            if (logChanged) persist();
 
             if (request.leaderCommit() > commitIndex) {
                 long lastNewIndex = log.size() - 1;
@@ -1029,27 +1033,43 @@ public class Node<T> implements RaftMessageReceiver{
     }
 
     public boolean propose(String clientID, long sequenceNum, T command) {
-    long indexAwaiting;
-    
-    lock.lock();
-    try {
-        if (currentRole != Role.LEADER) return false;
+        long indexAwaiting;
+        
+        lock.lock();
+        try {
+            if (currentRole != Role.LEADER) return false;
 
-        if (clientSession.getOrDefault(clientID, -1L) >= sequenceNum){
-            return true;
+            if (clientSession.getOrDefault(clientID, -1L) >= sequenceNum){
+                return true;
+            }
+
+            LogEntry<T> entry = new LogEntry<>(currentTerm, clientID, sequenceNum, command);
+            log.add(entry);
+            indexAwaiting = lastIncludedIndex + log.size();
+            persist();
+            
+            // Forza l'invio immediato dei log ai follower senza attendere il timer periodico
+            sendHearthbeats();
+        } finally {
+            lock.unlock(); // Rilascia il lock per non bloccare il nodo durante l'attesa
         }
 
-        LogEntry<T> entry = new LogEntry<>(currentTerm, clientID, sequenceNum, command);
-        log.add(entry);
-        indexAwaiting = lastIncludedIndex + log.size();
-        persist();
-    } finally {
-        lock.unlock(); // Rilascia il lock prima di attendere la rete
+        // Attesa del quorum: il metodo non restituisce true finché la maggioranza non ha replicato
+        long start = System.currentTimeMillis();
+        while (System.currentTimeMillis() - start < 3000) { // Timeout di 3 secondi
+            if (getCommitIndex() >= indexAwaiting) {
+                return true; // Replicazione avvenuta con successo sulla maggioranza
+            }
+            try { 
+                Thread.sleep(5); 
+            } catch (InterruptedException e) { 
+                Thread.currentThread().interrupt();
+                break; 
+            }
+        }
+        
+        return false; // Fallimento: quorum non raggiunto in tempo
     }
-    
-    // Attende la conferma della maggioranza
-    return waitForCommit(indexAwaiting);
-}
 
 private boolean waitForCommit(long index) {
     long start = System.currentTimeMillis();
@@ -1180,13 +1200,13 @@ private boolean waitForCommit(long index) {
                     String message = command.substring(firstSpace + 1).trim();
                     
                     stateMachine.computeIfAbsent(room, k -> new CopyOnWriteArrayList<>()).add(message);
-                    System.out.println("💬 NODE " + nodeID + " added a message in room [" + room + "]");
+                    //System.out.println("💬 NODE " + nodeID + " added a message in room [" + room + "]");
                 }
             } else if (command.startsWith("CONF_ADD_SERVER=")) {
                 String newPeer = command.substring(16).trim();
                 if (!peers.contains(newPeer) && !newPeer.equals(nodeID)) {
                     peers.add(newPeer);
-                    System.out.println("🔧 NODE " + nodeID + " ADDED PEER: " + newPeer);
+                    //System.out.println("🔧 NODE " + nodeID + " ADDED PEER: " + newPeer);
                     
                     if (currentRole == Role.LEADER) {
                         nextIndex.putIfAbsent(newPeer, (int) (lastIncludedIndex + log.size() + 1));
@@ -1196,7 +1216,7 @@ private boolean waitForCommit(long index) {
             } else if (command.startsWith("CONF_REMOVE_SERVER=")) {
                 String oldPeer = command.substring(19).trim();
                 peers.remove(oldPeer);
-                System.out.println("🔧 NODE " + nodeID + " REMOVED PEER: " + oldPeer);
+                //System.out.println("🔧 NODE " + nodeID + " REMOVED PEER: " + oldPeer);
                 
                 if (currentRole == Role.LEADER) {
                     nextIndex.remove(oldPeer);
@@ -1204,7 +1224,7 @@ private boolean waitForCommit(long index) {
                 }
                 
                 if (oldPeer.equals(nodeID)) {
-                    System.out.println("NODE " + nodeID + " removed from cluster. Stepping down.");
+                    //System.out.println("NODE " + nodeID + " removed from cluster. Stepping down.");
                     currentRole = Role.FOLLOWER;
                     isRemovedFromCluster = true;
                 }
@@ -1413,8 +1433,7 @@ private boolean waitForCommit(long index) {
      * @return The current logical commit index.
      */
     public long getCommitIndex() {
-        lock.lock();
-        try { return commitIndex; } finally { lock.unlock(); }
+        return commitIndex;
     }
 
     /**
@@ -1442,8 +1461,7 @@ private boolean waitForCommit(long index) {
      * @return The current logical index of the last command executed by the state machine.
      */
     public long getLastApplied() {
-        lock.lock();
-        try { return lastApplied; } finally { lock.unlock(); }
+        return lastApplied;
     }
 
     /**

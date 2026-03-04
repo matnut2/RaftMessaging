@@ -26,41 +26,40 @@ public class WalStorage<T> implements Storage<T> {
     }
 
     @Override
-public synchronized void save(long currentTerm, String votedFor, List<LogEntry<T>> log) {
-    // 1. Salvataggio dei metadati (sovrascrittura)
-    try (FileWriter writer = new FileWriter(metaFile)) {
-        MetaData meta = new MetaData(currentTerm, votedFor);
-        gson.toJson(meta, writer);
-    } catch (IOException e) {
-        throw new RuntimeException("Failed to save metadata", e);
+    public synchronized void save(long currentTerm, String votedFor, List<LogEntry<T>> log) {
+        try (FileWriter writer = new FileWriter(metaFile)) {
+            MetaData meta = new MetaData(currentTerm, votedFor);
+            gson.toJson(meta, writer);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to save metadata", e);
+        }
+
+        try {
+            if (log.size() > persistedLogSize) {
+                // Bufferizzazione delle nuove scritture
+                try (BufferedWriter writer = new BufferedWriter(new FileWriter(walFile, true), 65536)) {
+                    for (int i = persistedLogSize; i < log.size(); i++) {
+                        writer.write(gson.toJson(log.get(i), logEntryType));
+                        writer.newLine();
+                    }
+                    writer.flush();
+                }
+            } else if (log.size() < persistedLogSize) {
+                // Riscrive interamente il log solo in caso di troncamento per divergenza
+                try (BufferedWriter writer = new BufferedWriter(new FileWriter(walFile, false), 65536)) {
+                    for (LogEntry<T> entry : log) {
+                        writer.write(gson.toJson(entry, logEntryType));
+                        writer.newLine();
+                    }
+                    writer.flush();
+                }
+            }
+            persistedLogSize = log.size();
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to write to WAL", e);
+        }
     }
 
-    // 2. Scrittura ottimizzata del WAL (Write-Ahead Log)
-    try {
-        if (log.size() > persistedLogSize) {
-            // Aggiunge solo le nuove entry usando un buffer da 32KB
-            try (BufferedWriter writer = new BufferedWriter(new FileWriter(walFile, true), 32768)) {
-                for (int i = persistedLogSize; i < log.size(); i++) {
-                    writer.write(gson.toJson(log.get(i), logEntryType));
-                    writer.newLine();
-                }
-                writer.flush();
-            }
-        } else if (log.size() < persistedLogSize) {
-            // Riscrive interamente il log in caso di troncamento (es. cambio leader)
-            try (BufferedWriter writer = new BufferedWriter(new FileWriter(walFile, false), 32768)) {
-                for (LogEntry<T> entry : log) {
-                    writer.write(gson.toJson(entry, logEntryType));
-                    writer.newLine();
-                }
-                writer.flush();
-            }
-        }
-        persistedLogSize = log.size();
-    } catch (IOException e) {
-        throw new RuntimeException("Failed to write to WAL", e);
-    }
-}
     /**
      * Loads the Raft node's persistent state from the file system during initialization.
      * <p>This method reconstructs the node's stable state by performing two sequential operations:
