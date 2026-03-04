@@ -40,6 +40,7 @@ public class Node<T> implements RaftMessageReceiver{
     private final Timer commitTimer = Timer.builder("raft.commit.latency").register(registry);
     private final Counter proposalCounter = registry.counter("raft.proposals.total");   
 
+    private volatile boolean isSnapshotting = false;
 
     private final String nodeID;
     private final List<String> peers;
@@ -145,32 +146,58 @@ public class Node<T> implements RaftMessageReceiver{
      * </p>
      */
     public void takeSnapshot() {
+        if (isSnapshotting) return;
+
+        long snapshotIndex;
+        long snapshotTerm;
+        Snapshot newSnap;
+
         lock.lock();
         try {
+            if (isSnapshotting) return;
             if (lastApplied <= lastIncludedIndex) return;
 
-            long snapshotIndex = lastApplied-1;
-            
+            snapshotIndex = lastApplied - 1;
             LogEntry<T> entry = getEntry(snapshotIndex);
             if (entry == null) return;
-            long snapshotTerm = entry.term();
+            snapshotTerm = entry.term();
 
-            System.out.println("Node " + nodeID + " taking snapshot at index " + snapshotIndex);
-            Snapshot newSnap = new Snapshot(snapshotIndex, snapshotTerm, new ConcurrentHashMap<>(stateMachine), new ConcurrentHashMap<>(clientSession));
-            storage.saveSnapshot(newSnap);
-            int localCutIndex = getLocalIndex(snapshotIndex); 
-            List<LogEntry<T>> remaining = new ArrayList<>(log.subList(localCutIndex + 1, log.size()));
+            isSnapshotting = true;
+            System.out.println("Node " + nodeID + " capturing snapshot state at index " + snapshotIndex);
             
-            log.clear();
-            log.addAll(remaining);
-
-            lastIncludedIndex = snapshotIndex;
-            lastIncludedTerm = snapshotTerm;
-
-            persist(); 
-
+            newSnap = new Snapshot(snapshotIndex, snapshotTerm, 
+                new ConcurrentHashMap<>(stateMachine), 
+                new ConcurrentHashMap<>(clientSession));
         } finally {
             lock.unlock();
+        }
+
+        try {
+            storage.saveSnapshot(newSnap);
+
+            lock.lock();
+            try {
+                if (snapshotIndex <= lastIncludedIndex) return; 
+
+                int localCutIndex = getLocalIndex(snapshotIndex); 
+                
+                if (localCutIndex >= 0 && localCutIndex < log.size()) {
+                    List<LogEntry<T>> remaining = new ArrayList<>(log.subList(localCutIndex + 1, log.size()));
+                    log.clear();
+                    log.addAll(remaining);
+                } else {
+                    log.clear();
+                }
+
+                lastIncludedIndex = snapshotIndex;
+                lastIncludedTerm = snapshotTerm;
+
+                persist(); 
+            } finally {
+                lock.unlock();
+            }
+        } finally {
+            isSnapshotting = false;
         }
     }
 
@@ -1168,7 +1195,7 @@ private boolean waitForCommit(long index) {
             appliedAny = true;
         }
 
-        if (appliedAny && log.size() > 1000){
+        if (appliedAny && log.size() > 60000){
             vThreadExecutor.submit(this::takeSnapshot);
         }
     }
@@ -2032,5 +2059,14 @@ private boolean waitForCommit(long index) {
         System.out.println("Proposals: " + proposalCounter.count());
         System.out.println("Avg Latency: " + commitTimer.mean(java.util.concurrent.TimeUnit.MILLISECONDS) + " ms");
         System.out.println("Max Latency: " + commitTimer.max(java.util.concurrent.TimeUnit.MILLISECONDS) + " ms");
+    }
+
+    public long getTotalLogSize() {
+        lock.lock();
+        try {
+            return lastIncludedIndex + log.size() + 1;
+        } finally {
+            lock.unlock();
+        }
     }
 }

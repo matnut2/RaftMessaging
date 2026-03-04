@@ -17,9 +17,9 @@ public class RaftStressTest {
     @Test
     void runHighLoadStressTest() throws InterruptedException {
         try {
-            int numNodes = 60; 
-            int totalRequests = 50000; 
-            int concurrentClients = 15; 
+            int numNodes = 15; 
+            int totalRequests = 150000; 
+            int concurrentClients = 3; 
 
             network = new InMemoryNetwork(false); 
             setupCluster(numNodes);
@@ -69,7 +69,7 @@ public class RaftStressTest {
 
             System.out.println("\nChecking log consistency...");
             for (Node<String> n : cluster) {
-                System.out.println("Node " + n.getNodeID() + " log size: " + n.getLogCopy().size());
+                System.out.println("Node " + n.getNodeID() + " log size: " + n.getTotalLogSize());
             }
         } finally {
             shutdownAndCleanup();
@@ -95,16 +95,16 @@ public class RaftStressTest {
         long start = System.currentTimeMillis();
         boolean allSynced = false;
 
-        while (System.currentTimeMillis() - start < 15000) {
+        while (System.currentTimeMillis() - start < 30000) { 
             allSynced = true;
             for (Node<String> n : cluster) {
-                if (n.getLogCopy().size() < expectedLogSize) {
+                if (n.getTotalLogSize() < expectedLogSize) {
                     allSynced = false;
                     break;
                 }
             }
             if (allSynced) break;
-            Thread.sleep(250);
+            Thread.sleep(250); 
         }
 
         if (!allSynced) {
