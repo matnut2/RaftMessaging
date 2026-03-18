@@ -1,5 +1,5 @@
 <div align="left">
-  <img src="https://img.shields.io/badge/Project_Status-WIP-yellow" alt="Status">
+  <img src="https://img.shields.io/badge/Project_Status-In_Review-yellow" alt="Status">
 </div>
 
 # RaftMessaging - A Raft-Based Application for Group Communication (Not Encrypted)
@@ -8,6 +8,10 @@ A Java 21+ Proof-of-Concept for a message streaming distributed that ensurens da
 
 ## Documentation
 This project implements the **Raft Consensus Algorithm**, designed to manage a consistent and fault-tolerant distributed state. The system facilitates a multi-room chat application where messages are atomically replicated across a cluster of independent nodes.
+
+A [Technical Report](./TechnicalReport.pdf) is available in this repo
+
+![alt text](chat.png)
 
 ### System Architecture
 
@@ -42,6 +46,16 @@ An interactive monitoring dashboard (`index.html`) is provided to:
 * Monitor real-time log synchronization across the cluster.
 * Send messages to specific rooms via node-specific HTTP gateways.
 * Observe system resilience by dynamically switching the gateway node.
+
+In order to access to the web interface, you need to start the docker service with:
+
+`docker-compose up --build`
+
+To clear the old volumes and images, please use:
+
+`docker-compose down -v`
+
+`docker builder prune -f`
 
 ### Performance Analysis
 By leveraging **Virtual Threads**, the system manages high concurrency with minimal CPU overhead. The batching mechanism allows for performance peaks exceeding 15,000 requests per second during in-memory stress testing.

@@ -25,6 +25,26 @@ public class WalStorage<T> implements Storage<T> {
         this.logEntryType = TypeToken.getParameterized(LogEntry.class, commandType).getType();
     }
 
+    /**
+     * Persists the Raft node's stable state to the file system to ensure data durability.
+     * <p>This method updates the node's persistent state by performing two sequential operations:
+     * <ol>
+     * <li><b>Metadata Persistence:</b> Writes the {@code currentTerm} and {@code votedFor} 
+     * fields into the {@code metaFile} as a JSON object. This ensures the node's term and voting 
+     * record survive across crashes, preventing safety violations like voting twice in the same term.</li>
+     * <li><b>Write-Ahead Log (WAL) Update:</b> Updates the log entries stored on disk. To optimize 
+     * I/O operations, it only appends new entries to the WAL if the in-memory log has grown. 
+     * Conversely, if the in-memory log is smaller than the {@code persistedLogSize} 
+     * (e.g., due to log truncation when resolving divergences with a leader), it safely rewrites 
+     * the entire WAL file from scratch to reflect the corrected state.</li>
+     * </ol>
+     * The internal {@code persistedLogSize} is subsequently synchronized with the new log size.</p>
+     *
+     * @param currentTerm The latest term the server has seen.
+     * @param votedFor    The candidate identifier that received a vote in the current term (or {@code null} if none).
+     * @param log         The complete sequence of {@link LogEntry} objects currently held by the node.
+     * @throws RuntimeException if an I/O error occurs while writing to the metadata or WAL files.
+     */
     @Override
     public synchronized void save(long currentTerm, String votedFor, List<LogEntry<T>> log) {
         try (FileWriter writer = new FileWriter(metaFile)) {
@@ -36,7 +56,6 @@ public class WalStorage<T> implements Storage<T> {
 
         try {
             if (log.size() > persistedLogSize) {
-                // Bufferizzazione delle nuove scritture
                 try (BufferedWriter writer = new BufferedWriter(new FileWriter(walFile, true), 65536)) {
                     for (int i = persistedLogSize; i < log.size(); i++) {
                         writer.write(gson.toJson(log.get(i), logEntryType));
@@ -45,7 +64,6 @@ public class WalStorage<T> implements Storage<T> {
                     writer.flush();
                 }
             } else if (log.size() < persistedLogSize) {
-                // Riscrive interamente il log solo in caso di troncamento per divergenza
                 try (BufferedWriter writer = new BufferedWriter(new FileWriter(walFile, false), 65536)) {
                     for (LogEntry<T> entry : log) {
                         writer.write(gson.toJson(entry, logEntryType));

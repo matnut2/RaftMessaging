@@ -62,40 +62,40 @@
         <div class="brand"><i class="fas fa-network-wired"></i> Raft Cluster</div>
         
         <div class="control-group">
-            <label for="usernameInput">Il tuo Alias</label>
-            <input type="text" id="usernameInput" placeholder="Inserisci nome utente">
+            <label for="usernameInput">Your Alias</label>
+            <input type="text" id="usernameInput" placeholder="Insert Username Here">
         </div>
         
         <div class="control-group">
-            <label for="roomInput">Stanza di Replicazione</label>
-            <input type="text" id="roomInput" value="chat_generale" onchange="updateRoomBadge()">
+            <label for="roomInput">Replication Room</label>
+            <input type="text" id="roomInput" value="general" onchange="updateRoomBadge()">
         </div>
         
         <div class="control-group">
-            <label for="nodeInput">Gateway di Accesso (Nodo)</label>
+            <label for="nodeInput">Access Gateway (Node)</label>
             <select id="nodeInput" onchange="resetChat()">
-                <option value="http://127.0.0.1:8081">Nodo A (Porta 8081)</option>
-                <option value="http://127.0.0.1:8082">Nodo B (Porta 8082)</option>
-                <option value="http://127.0.0.1:8083">Nodo C (Porta 8083)</option>
+                <option value="http://127.0.0.1:8081">Node A (Port 8081)</option>
+                <option value="http://127.0.0.1:8082">Node B (Port 8082)</option>
+                <option value="http://127.0.0.1:8083">Node C (Port 8083)</option>
             </select>
         </div>
 
         <div class="network-status">
-            <div style="margin-bottom: 8px; font-weight: bold; color: var(--text-main);">Stato Connessione</div>
-            <div><span class="status-indicator" id="statusDot"></span> <span id="statusArea">In attesa...</span></div>
+            <div style="margin-bottom: 8px; font-weight: bold; color: var(--text-main);">Connection Status</div>
+            <div><span class="status-indicator" id="statusDot"></span> <span id="statusArea">Waiting...</span></div>
         </div>
     </div>
 
     <div class="main-chat">
         <div class="chat-header">
-            <h2>Log Distribuito</h2>
-            <span class="room-badge" id="roomBadge">#chat_generale</span>
+            <h2>Distributed Log</h2>
+            <span class="room-badge" id="roomBadge">#general</span>
         </div>
 
         <div class="chat-box" id="chatBox"></div>
 
         <div class="input-area">
-            <input type="text" id="messageInput" placeholder="Invia un comando alla State Machine..." onkeypress="handleKeyPress(event)">
+            <input type="text" id="messageInput" placeholder="Type a message here..." onkeypress="handleKeyPress(event)">
             <button class="btn-send" onclick="sendMessage()"><i class="fas fa-paper-plane"></i></button>
         </div>
     </div>
@@ -114,7 +114,7 @@
     let renderedMessagesCount = 0;
 
     function updateRoomBadge() {
-        roomBadge.innerText = '#' + (roomInput.value.trim() || 'chat_generale');
+        roomBadge.innerText = '#' + (roomInput.value.trim() || 'general');
         resetChat();
     }
 
@@ -125,7 +125,7 @@
     }
 
     async function fetchMessages() {
-        const room = roomInput.value.trim() || 'chat_generale';
+        const room = roomInput.value.trim() || 'general';
         const baseUrl = nodeInput.value;
 
         try {
@@ -136,11 +136,11 @@
             renderMessages(messages);
             
             statusDot.classList.add('active');
-            statusArea.innerText = `Sincronizzato (${new Date().toLocaleTimeString()})`;
+            statusArea.innerText = `Syncronized (${new Date().toLocaleTimeString()})`;
             statusArea.style.color = "var(--success)";
         } catch (error) {
             statusDot.classList.remove('active');
-            statusArea.innerText = `Errore di Quorum / Leader`;
+            statusArea.innerText = `Quorum / Leader Error!`;
             statusArea.style.color = "var(--danger)";
         }
     }
@@ -148,19 +148,17 @@
     function renderMessages(messages) {
         if (messages.length === 0) {
             if (chatBox.children.length === 0 || renderedMessagesCount > 0) {
-                chatBox.innerHTML = '<div class="message system">La stanza è vuota. Nessun dato nel log Raft.</div>';
+                chatBox.innerHTML = '<div class="message system">Room is Empty! No commands in the log</div>';
             }
             renderedMessagesCount = 0;
             return;
         }
 
-        // Se il numero di messaggi è diminuito (es. dopo uno snapshot o cambio leader), resetta
         if (messages.length < renderedMessagesCount) {
             chatBox.innerHTML = '';
             renderedMessagesCount = 0;
         }
 
-        // Aggiungi solo i nuovi messaggi in modo incrementale
         for (let i = renderedMessagesCount; i < messages.length; i++) {
             const msg = messages[i];
             
@@ -197,13 +195,13 @@
     }
 
     async function sendMessage() {
-        const room = roomInput.value.trim() || 'chat_generale';
+        const room = roomInput.value.trim() || 'general';
         const message = messageInput.value.trim();
         let username = usernameInput.value.trim();
         const baseUrl = nodeInput.value;
 
         if (!message) return;
-        if (!username) { username = "Anonimo"; usernameInput.value = username; }
+        if (!username) { username = "Unkwnown"; usernameInput.value = username; }
         
         usernameInput.disabled = true;
 
@@ -219,17 +217,16 @@
             if (response.ok) {
                 fetchMessages();
             } else {
-                alert("Errore: Il nodo non è il Leader o il Quorum non è stato raggiunto.");
+                alert("Error: the node is not a leader or the quorum was not reached.");
             }
         } catch (error) {
-            console.error("Errore invio:", error);
-            alert("Errore di rete durante l'invio della proposta.");
+            console.error("Error:", error);
+            alert("Network error.");
         }
     }
 
     function handleKeyPress(event) { if (event.key === 'Enter') sendMessage(); }
     
-    // Polling ogni secondo per aggiornamenti dal cluster
     setInterval(fetchMessages, 1000);
     fetchMessages(); 
 </script>

@@ -10,7 +10,6 @@ public class main {
     public static void main(String[] args) throws InterruptedException {
         String nodeId = args.length > 0 ? args[0] : "A";
 
-        // Utilizzo dei nomi dei servizi Docker al posto di 127.0.0.1
         Map<String, String> clusterAddresses = Map.of(
             "A", "http://node-a:8081",
             "B", "http://node-b:8082",

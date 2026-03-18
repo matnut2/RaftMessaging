@@ -2054,13 +2054,33 @@ private boolean waitForCommit(long index) {
         }
     }
 
+    /**
+     * Outputs the node's operational performance metrics to the standard output.
+     * <p>This utility method displays key statistics gathered during the node's 
+     * lifecycle, specifically the total number of proposed commands. It provides 
+     * a quick insight into the system's throughput and the volume of requests 
+     * handled by this specific node.</p>
+     */
     public void printPerformanceStats() {
         System.out.println("=== Performance Report for Node " + nodeID + " ===");
         System.out.println("Proposals: " + proposalCounter.count());
-        System.out.println("Avg Latency: " + commitTimer.mean(java.util.concurrent.TimeUnit.MILLISECONDS) + " ms");
-        System.out.println("Max Latency: " + commitTimer.max(java.util.concurrent.TimeUnit.MILLISECONDS) + " ms");
     }
 
+    /**
+     * Calculates the absolute total number of entries that have been appended to the node's log over its lifetime.
+     * <p>In a Raft system utilizing log compaction, the in-memory {@code log} list only represents 
+     * the uncompacted suffix of the entire historical log. This thread-safe method reconstructs 
+     * the true global size by combining the number of entries currently residing in memory 
+     * with the number of entries that have been systematically discarded and replaced by 
+     * the latest state machine snapshot.</p>
+     *
+     * <p><b>Calculation Method:</b>
+     * The total size is derived by adding the number of active memory entries ({@code log.size()}) 
+     * to the absolute index of the last snapshotted entry ({@code lastIncludedIndex}), plus an offset 
+     * of 1 to account for 0-based indexing algorithms.</p>
+     *
+     * @return The absolute total count of all log entries ever processed or stored by this node.
+     */
     public long getTotalLogSize() {
         lock.lock();
         try {

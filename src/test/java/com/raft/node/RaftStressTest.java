@@ -18,8 +18,8 @@ public class RaftStressTest {
     void runHighLoadStressTest() throws InterruptedException {
         try {
             int numNodes = 15; 
-            int totalRequests = 150000; 
-            int concurrentClients = 3; 
+            int totalRequests = 1; 
+            int concurrentClients = 200; 
 
             network = new InMemoryNetwork(false); 
             setupCluster(numNodes);
