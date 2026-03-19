@@ -9,7 +9,9 @@ A Java 21+ Proof-of-Concept for a message streaming distributed that ensurens da
 ## Documentation
 This project implements the **Raft Consensus Algorithm**, designed to manage a consistent and fault-tolerant distributed state. The system facilitates a multi-room chat application where messages are atomically replicated across a cluster of independent nodes.
 
-A [Technical Report](./TechnicalReport.pdf) is available in this repo
+A [Technical Report](./TechnicalReport.pdf) is available in this repo.
+
+There is also a [Written Integration](./WrittenIntegration.pdf) which aims to illustrate a bit deeper some choices about the project.
 
 ![alt text](chat.png)
 
