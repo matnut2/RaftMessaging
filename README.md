@@ -1,5 +1,5 @@
 <div align="left">
-  <img src="https://img.shields.io/badge/Project_Status-In_Review-yellow" alt="Status">
+  <img src="https://img.shields.io/badge/Project_Status-Completed-green" alt="Status">
 </div>
 
 # RaftMessaging - A Raft-Based Application for Group Communication (Not Encrypted)
